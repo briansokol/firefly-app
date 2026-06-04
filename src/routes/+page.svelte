@@ -1,156 +1,209 @@
 <script lang="ts">
-  import { invoke } from "@tauri-apps/api/core";
+  import {
+    listConversations,
+    createConversation,
+    getSettings,
+    setSettings,
+    setToken,
+    hasToken,
+    type Conversation,
+    type Settings,
+  } from "$lib/api";
+  import ConversationList from "$lib/ConversationList.svelte";
+  import Chat from "$lib/Chat.svelte";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  let conversations = $state<Conversation[]>([]);
+  let selectedId = $state<string | null>(null);
+  let settings = $state<Settings>({ fireflyEndpoint: "", logicalModel: "" });
+  let tokenPresent = $state(true);
+  let showSettings = $state(false);
+  let tokenInput = $state("");
+  let savedNote = $state("");
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  async function refresh() {
+    conversations = await listConversations();
+    if (!selectedId && conversations.length > 0) {
+      selectedId = conversations[0].id;
+    }
+  }
+
+  $effect(() => {
+    (async () => {
+      settings = await getSettings();
+      tokenPresent = await hasToken();
+      if (!tokenPresent) showSettings = true;
+      await refresh();
+    })();
+  });
+
+  async function newConversation() {
+    const c = await createConversation("New conversation");
+    await refresh();
+    selectedId = c.id;
+  }
+
+  async function saveSettings() {
+    await setSettings({
+      fireflyEndpoint: settings.fireflyEndpoint,
+      logicalModel: settings.logicalModel,
+    });
+    if (tokenInput.trim()) {
+      await setToken(tokenInput.trim());
+      tokenInput = "";
+    }
+    tokenPresent = await hasToken();
+    savedNote = "Saved";
+    setTimeout(() => (savedNote = ""), 1500);
   }
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<div class="app">
+  <ConversationList
+    {conversations}
+    {selectedId}
+    onselect={(id) => (selectedId = id)}
+    onnew={newConversation}
+  />
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
+  <main>
+    <header>
+      <span class="title">Firefly</span>
+      <span class="model">{settings.logicalModel || "—"}</span>
+      {#if !tokenPresent}
+        <span class="warn">no token set</span>
+      {/if}
+      <button class="gear" onclick={() => (showSettings = !showSettings)}>
+        ⚙ Settings
+      </button>
+    </header>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
-</main>
+    {#if showSettings}
+      <div class="settings">
+        <label>
+          Firefly endpoint
+          <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
+        </label>
+        <label>
+          Logical model
+          <input bind:value={settings.logicalModel} spellcheck="false" />
+        </label>
+        <label>
+          Device token {tokenPresent ? "(stored — leave blank to keep)" : "(required)"}
+          <input
+            type="password"
+            bind:value={tokenInput}
+            placeholder="sk-…"
+            spellcheck="false"
+          />
+        </label>
+        <div class="actions">
+          <button onclick={saveSettings}>Save</button>
+          <span class="note">{savedNote}</span>
+        </div>
+      </div>
+    {/if}
+
+    <Chat conversationId={selectedId} />
+  </main>
+</div>
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
-
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
   :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+    --bg: #1c1c20;
+    --panel: #26262c;
+    --hover: #33333b;
+    --border: #3a3a42;
+    --text: #ececf0;
+    --muted: #9a9aa5;
+    --accent: #d9622b;
+    color-scheme: dark;
   }
-
-  a:hover {
-    color: #24c8db;
+  :global(body) {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, system-ui, Avenir, Helvetica, Arial, sans-serif;
   }
-
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+  .app {
+    display: flex;
+    height: 100vh;
   }
-  button:active {
-    background-color: #0f0f0f69;
+  main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
   }
-}
-
+  header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .title {
+    font-weight: 700;
+  }
+  .model {
+    font-size: 0.75rem;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+  }
+  .warn {
+    font-size: 0.75rem;
+    color: #ffb3b3;
+  }
+  .gear {
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.35rem 0.6rem;
+    cursor: pointer;
+  }
+  .settings {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+    padding: 1rem;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel);
+  }
+  .settings label {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .settings input {
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .actions button {
+    padding: 0.45rem 1rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .note {
+    color: var(--muted);
+    font-size: 0.8rem;
+  }
 </style>
