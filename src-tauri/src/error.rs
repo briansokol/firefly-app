@@ -6,6 +6,8 @@ pub enum AppError {
     Db(#[from] sqlx::Error),
     #[error("keychain error: {0}")]
     Keychain(#[from] keyring::Error),
+    #[error("{0}")]
+    KeychainUnavailable(String),
     #[error("network error: {0}")]
     Http(#[from] reqwest::Error),
     #[error("no API token set")]

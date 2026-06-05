@@ -47,6 +47,7 @@
   let showSettings = $state(false);
   let tokenInput = $state("");
   let savedNote = $state("");
+  let saveError = $state("");
 
   async function refresh() {
     conversations = await listConversations();
@@ -81,9 +82,15 @@
       modelChatHeavy: settings.modelChatHeavy,
       modelFrontier: settings.modelFrontier,
     });
+    saveError = "";
     if (tokenInput.trim()) {
-      await setToken(tokenInput.trim());
-      tokenInput = "";
+      try {
+        await setToken(tokenInput.trim());
+        tokenInput = "";
+      } catch (e) {
+        saveError = String(e);
+        return;
+      }
     }
     tokenPresent = await hasToken();
     reachable = await checkFirefly();
@@ -164,6 +171,9 @@
           <button onclick={saveSettings}>Save</button>
           <span class="note">{savedNote}</span>
         </div>
+        {#if saveError}
+          <p class="save-error">{saveError}</p>
+        {/if}
       </div>
     {/if}
 
@@ -293,5 +303,10 @@
   .note {
     color: var(--muted);
     font-size: 0.8rem;
+  }
+  .save-error {
+    margin: 0.5rem 0 0;
+    color: #ffb3b3;
+    font-size: 0.85rem;
   }
 </style>
