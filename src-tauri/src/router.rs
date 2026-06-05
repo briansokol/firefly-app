@@ -3,6 +3,7 @@
 //! implemented in Phase 2.
 
 use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -126,6 +127,28 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
     }
 }
 
+/// Pure: is a cached reachability result still within its TTL?
+pub fn is_fresh(checked_at: Option<Instant>, now: Instant, ttl: Duration) -> bool {
+    match checked_at {
+        Some(t) => now.duration_since(t) < ttl,
+        None => false,
+    }
+}
+
+/// Probe Firefly with a short timeout. Any HTTP response (even 401) means
+/// reachable; only a connection/timeout failure means unreachable.
+pub async fn check_reachable(firefly_endpoint: &str) -> bool {
+    let url = format!("{}/health", resolve_endpoint(firefly_endpoint).trim_end_matches('/'));
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(1500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    client.get(&url).send().await.is_ok()
+}
+
 /// Normalize the configured Firefly endpoint into a base URL with a scheme.
 pub fn resolve_endpoint(firefly_endpoint: &str) -> String {
     let e = firefly_endpoint.trim();
@@ -139,6 +162,25 @@ pub fn resolve_endpoint(firefly_endpoint: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn cache_is_stale_when_never_checked() {
+        let now = Instant::now();
+        assert!(!is_fresh(None, now, Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn cache_is_fresh_within_ttl() {
+        let t0 = Instant::now();
+        assert!(is_fresh(Some(t0), t0 + Duration::from_secs(2), Duration::from_secs(5)));
+    }
+
+    #[test]
+    fn cache_is_stale_past_ttl() {
+        let t0 = Instant::now();
+        assert!(!is_fresh(Some(t0), t0 + Duration::from_secs(6), Duration::from_secs(5)));
+    }
 
     fn inputs(reachable: bool) -> RouteInputs<'static> {
         RouteInputs {
