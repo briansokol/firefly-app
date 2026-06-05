@@ -82,6 +82,87 @@ async fn check_firefly(state: State<'_, AppState>) -> Result<bool> {
     Ok(firefly_reachable(&state, &settings.firefly_endpoint).await)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "state")]
+enum OnDevice {
+    Ready { model: String },
+    ModelMissing { model: String },
+    Unreachable,
+}
+
+fn on_device_base(endpoint: &str) -> String {
+    router::resolve_endpoint(endpoint)
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
+}
+
+#[tauri::command]
+async fn check_on_device(state: State<'_, AppState>) -> Result<OnDevice> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let resp = match client.get(format!("{base}/api/tags")).send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let tags: serde_json::Value = resp.json().await.unwrap_or_default();
+    let present = tags["models"].as_array().is_some_and(|ms| {
+        ms.iter()
+            .any(|m| m["name"].as_str() == Some(s.on_device_model.as_str()))
+    });
+    Ok(if present {
+        OnDevice::Ready { model: s.on_device_model }
+    } else {
+        OnDevice::ModelMissing { model: s.on_device_model }
+    })
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PullProgress {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+async fn pull_on_device_model(
+    state: State<'_, AppState>,
+    on_pull: Channel<PullProgress>,
+) -> Result<()> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = reqwest::Client::new();
+    let mut resp = client
+        .post(format!("{base}/api/pull"))
+        .json(&serde_json::json!({ "model": s.on_device_model, "stream": true }))
+        .send()
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    // Ollama streams newline-delimited JSON status objects.
+    while let Some(chunk) = resp.chunk().await.map_err(|e| AppError::Other(e.to_string()))? {
+        for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            if let Ok(p) = serde_json::from_slice::<serde_json::Value>(line) {
+                on_pull
+                    .send(PullProgress {
+                        status: p["status"].as_str().unwrap_or_default().to_string(),
+                        completed: p["completed"].as_u64(),
+                        total: p["total"].as_u64(),
+                    })
+                    .ok();
+            }
+        }
+    }
+    Ok(())
+}
+
 #[tauri::command]
 async fn list_conversations(state: State<'_, AppState>) -> Result<Vec<Conversation>> {
     store::list_conversations(&state.pool).await
@@ -226,6 +307,8 @@ pub fn run() {
             set_settings,
             send_message,
             check_firefly,
+            check_on_device,
+            pull_on_device_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

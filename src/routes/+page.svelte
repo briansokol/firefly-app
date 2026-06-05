@@ -7,8 +7,11 @@
     setToken,
     hasToken,
     checkFirefly,
+    checkOnDevice,
+    pullOnDeviceModel,
     type Conversation,
     type Settings,
+    type OnDeviceStatus,
   } from "$lib/api";
   import ConversationList from "$lib/ConversationList.svelte";
   import Chat from "$lib/Chat.svelte";
@@ -24,6 +27,22 @@
     modelFrontier: "",
   });
   let reachable = $state<boolean | null>(null);
+  let onDevice = $state<OnDeviceStatus | null>(null);
+  let pulling = $state(false);
+  let pullPct = $state(0);
+
+  async function pullModel() {
+    pulling = true;
+    pullPct = 0;
+    try {
+      await pullOnDeviceModel((p) => {
+        if (p.total) pullPct = Math.round((100 * (p.completed ?? 0)) / p.total);
+      });
+      onDevice = await checkOnDevice();
+    } finally {
+      pulling = false;
+    }
+  }
   let tokenPresent = $state(true);
   let showSettings = $state(false);
   let tokenInput = $state("");
@@ -40,6 +59,7 @@
     (async () => {
       settings = await getSettings();
       checkFirefly().then((r) => (reachable = r));
+      checkOnDevice().then((r) => (onDevice = r));
       tokenPresent = await hasToken();
       if (!tokenPresent) showSettings = true;
       await refresh();
@@ -106,6 +126,22 @@
         <label>On-device model
           <input bind:value={settings.onDeviceModel} spellcheck="false" />
         </label>
+        {#if onDevice}
+          <div class="ready" class:down={onDevice.state === "unreachable"}>
+            {#if onDevice.state === "ready"}
+              on-device ready · {onDevice.model}
+            {:else if onDevice.state === "modelMissing"}
+              model not installed
+              <button type="button" onclick={pullModel} disabled={pulling}>
+                {pulling ? `pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
+              </button>
+            {:else}
+              server unreachable: install &amp; start Ollama, then pull the model:
+              <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
+              <br />(Framework NPU: run <code>flm serve</code> + <code>flm pull {settings.onDeviceModel}</code> instead)
+            {/if}
+          </div>
+        {/if}
         <label>Home-base model: code/write
           <input bind:value={settings.modelCode} spellcheck="false" />
         </label>
@@ -182,6 +218,27 @@
   }
   .conn.down {
     color: #ffb3b3;
+  }
+  .ready {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .ready.down {
+    color: #ffb3b3;
+  }
+  .ready code {
+    background: var(--bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+  }
+  .ready button {
+    margin-left: 0.5rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
   }
   .warn {
     font-size: 0.75rem;

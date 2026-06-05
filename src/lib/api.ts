@@ -63,6 +63,27 @@ export const setSettings = (settings: Settings) =>
 
 export const checkFirefly = () => invoke<boolean>("check_firefly");
 
+export type OnDeviceStatus =
+  | { state: "ready"; model: string }
+  | { state: "modelMissing"; model: string }
+  | { state: "unreachable" };
+
+export interface PullProgress {
+  status: string;
+  completed?: number;
+  total?: number;
+}
+
+export const checkOnDevice = () => invoke<OnDeviceStatus>("check_on_device");
+
+export function pullOnDeviceModel(
+  onProgress: (p: PullProgress) => void,
+): Promise<void> {
+  const channel = new Channel<PullProgress>();
+  channel.onmessage = onProgress;
+  return invoke<void>("pull_on_device_model", { onPull: channel });
+}
+
 /** Send a message and stream the assistant reply. Resolves with the assistant
  *  message id once the stream completes. The token never reaches the webview. */
 export function sendMessage(
