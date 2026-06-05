@@ -15,6 +15,8 @@ pub struct ChatMsg {
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum StreamEvent {
     Started,
+    // Which tier/model is serving this response (for the UI badge).
+    Routed { tier: String, model: String, degraded: bool },
     // Reasoning ("thinking") tokens from reasoning models; shown but not persisted.
     Reasoning { text: String },
     Token { text: String },
@@ -26,7 +28,7 @@ pub enum StreamEvent {
 /// Returns the fully accumulated assistant text on success.
 pub async fn stream_chat(
     endpoint: &str,
-    token: &str,
+    token: Option<&str>,
     model: &str,
     messages: Vec<ChatMsg>,
     channel: &Channel<StreamEvent>,
@@ -38,13 +40,14 @@ pub async fn stream_chat(
         "stream": true,
     });
 
-    let resp = reqwest::Client::new()
+    let mut req = reqwest::Client::new()
         .post(&url)
-        .bearer_auth(token)
         .header("Accept", "text/event-stream")
-        .json(&body)
-        .send()
-        .await?;
+        .json(&body);
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await?;
 
     if !resp.status().is_success() {
         let status = resp.status();
