@@ -6,6 +6,7 @@
     setSettings,
     setToken,
     hasToken,
+    checkFirefly,
     type Conversation,
     type Settings,
   } from "$lib/api";
@@ -14,7 +15,15 @@
 
   let conversations = $state<Conversation[]>([]);
   let selectedId = $state<string | null>(null);
-  let settings = $state<Settings>({ fireflyEndpoint: "", logicalModel: "" });
+  let settings = $state<Settings>({
+    fireflyEndpoint: "",
+    onDeviceEndpoint: "",
+    onDeviceModel: "",
+    modelCode: "",
+    modelChatHeavy: "",
+    modelFrontier: "",
+  });
+  let reachable = $state<boolean | null>(null);
   let tokenPresent = $state(true);
   let showSettings = $state(false);
   let tokenInput = $state("");
@@ -30,6 +39,7 @@
   $effect(() => {
     (async () => {
       settings = await getSettings();
+      checkFirefly().then((r) => (reachable = r));
       tokenPresent = await hasToken();
       if (!tokenPresent) showSettings = true;
       await refresh();
@@ -45,13 +55,18 @@
   async function saveSettings() {
     await setSettings({
       fireflyEndpoint: settings.fireflyEndpoint,
-      logicalModel: settings.logicalModel,
+      onDeviceEndpoint: settings.onDeviceEndpoint,
+      onDeviceModel: settings.onDeviceModel,
+      modelCode: settings.modelCode,
+      modelChatHeavy: settings.modelChatHeavy,
+      modelFrontier: settings.modelFrontier,
     });
     if (tokenInput.trim()) {
       await setToken(tokenInput.trim());
       tokenInput = "";
     }
     tokenPresent = await hasToken();
+    reachable = await checkFirefly();
     savedNote = "Saved";
     setTimeout(() => (savedNote = ""), 1500);
   }
@@ -68,7 +83,9 @@
   <main>
     <header>
       <span class="title">Firefly</span>
-      <span class="model">{settings.logicalModel || "—"}</span>
+      <span class="conn" class:down={reachable === false}>
+        {reachable === null ? "…" : reachable ? "Firefly online" : "Firefly offline"}
+      </span>
       {#if !tokenPresent}
         <span class="warn">no token set</span>
       {/if}
@@ -83,9 +100,20 @@
           Firefly endpoint
           <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
         </label>
-        <label>
-          Logical model
-          <input bind:value={settings.logicalModel} spellcheck="false" />
+        <label>On-device endpoint
+          <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
+        </label>
+        <label>On-device model
+          <input bind:value={settings.onDeviceModel} spellcheck="false" />
+        </label>
+        <label>Home-base model: code/write
+          <input bind:value={settings.modelCode} spellcheck="false" />
+        </label>
+        <label>Home-base model: agentic
+          <input bind:value={settings.modelChatHeavy} spellcheck="false" />
+        </label>
+        <label>Cloud model: best
+          <input bind:value={settings.modelFrontier} spellcheck="false" />
         </label>
         <label>
           Device token {tokenPresent ? "(stored — leave blank to keep)" : "(required)"}
@@ -145,12 +173,15 @@
   .title {
     font-weight: 700;
   }
-  .model {
-    font-size: 0.75rem;
-    color: var(--muted);
+  .conn {
+    font-size: 0.72rem;
+    color: #9fe0a0;
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 0.1rem 0.5rem;
+  }
+  .conn.down {
+    color: #ffb3b3;
   }
   .warn {
     font-size: 0.75rem;

@@ -7,21 +7,37 @@ export interface Conversation {
   updatedAt: string;
 }
 
+export type TaskHint =
+  | "quick"
+  | "code-complete"
+  | "write"
+  | "explain-file"
+  | "agentic"
+  | "private"
+  | "best";
+
 export interface Message {
   id: string;
   conversationId: string;
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  tier?: string | null;
+  servedModel?: string | null;
 }
 
 export interface Settings {
   fireflyEndpoint: string;
-  logicalModel: string;
+  onDeviceEndpoint: string;
+  onDeviceModel: string;
+  modelCode: string;
+  modelChatHeavy: string;
+  modelFrontier: string;
 }
 
 export type StreamEvent =
   | { type: "started" }
+  | { type: "routed"; tier: string; model: string; degraded: boolean }
   | { type: "reasoning"; text: string }
   | { type: "token"; text: string }
   | { type: "done" }
@@ -45,11 +61,14 @@ export const getSettings = () => invoke<Settings>("get_settings");
 export const setSettings = (settings: Settings) =>
   invoke<void>("set_settings", { settings });
 
+export const checkFirefly = () => invoke<boolean>("check_firefly");
+
 /** Send a message and stream the assistant reply. Resolves with the assistant
  *  message id once the stream completes. The token never reaches the webview. */
 export function sendMessage(
   conversationId: string,
   content: string,
+  task: TaskHint,
   onEvent: (event: StreamEvent) => void,
 ): Promise<string> {
   const channel = new Channel<StreamEvent>();
@@ -57,6 +76,7 @@ export function sendMessage(
   return invoke<string>("send_message", {
     conversationId,
     content,
+    task,
     onToken: channel,
   });
 }
