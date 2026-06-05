@@ -44,14 +44,44 @@ pub struct Message {
     pub role: String,
     pub content: String,
     pub created_at: String,
+    pub tier: Option<String>,
+    pub served_model: Option<String>,
 }
+
+const SCHEMA_VERSION: i64 = 2;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
         .filename(db_path)
         .create_if_missing(true);
     let pool = SqlitePool::connect_with(opts).await?;
-    sqlx::raw_sql(MIGRATION).execute(&pool).await?;
+
+    let mut version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await?;
+
+    if version < 1 {
+        sqlx::raw_sql(MIGRATION).execute(&pool).await?;
+        version = 1;
+    }
+    if version < 2 {
+        sqlx::raw_sql(
+            "ALTER TABLE messages ADD COLUMN tier TEXT;\n\
+             ALTER TABLE messages ADD COLUMN served_model TEXT;",
+        )
+        .execute(&pool)
+        .await?;
+        version = 2;
+    }
+
+    // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
+    // so asserting the formatted string is injection-safe is correct here.
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "PRAGMA user_version = {SCHEMA_VERSION}"
+    )))
+    .execute(&pool)
+    .await?;
+    let _ = version;
     Ok(pool)
 }
 
@@ -66,7 +96,7 @@ pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>> 
 
 pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Vec<Message>> {
     let rows = sqlx::query_as::<_, Message>(
-        "SELECT id, conversation_id, role, content, created_at \
+        "SELECT id, conversation_id, role, content, created_at, tier, served_model \
          FROM messages WHERE conversation_id = ? ORDER BY created_at ASC, id ASC",
     )
     .bind(conversation_id)
@@ -102,7 +132,8 @@ pub async fn insert_message(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
     sqlx::query(
-        "INSERT INTO messages (id, conversation_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO messages (id, conversation_id, role, content, created_at, tier, served_model) \
+         VALUES (?, ?, ?, ?, ?, NULL, NULL)",
     )
     .bind(&id)
     .bind(conversation_id)
@@ -122,6 +153,8 @@ pub async fn insert_message(
         role: role.to_string(),
         content: content.to_string(),
         created_at: now,
+        tier: None,
+        served_model: None,
     })
 }
 
@@ -132,6 +165,21 @@ pub async fn update_message_content(
 ) -> Result<()> {
     sqlx::query("UPDATE messages SET content = ? WHERE id = ?")
         .bind(content)
+        .bind(message_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_message_routing(
+    pool: &SqlitePool,
+    message_id: &str,
+    tier: &str,
+    served_model: &str,
+) -> Result<()> {
+    sqlx::query("UPDATE messages SET tier = ?, served_model = ? WHERE id = ?")
+        .bind(tier)
+        .bind(served_model)
         .bind(message_id)
         .execute(pool)
         .await?;
@@ -156,4 +204,33 @@ pub async fn set_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<()
     .execute(pool)
     .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn migration_creates_tables_and_routing_columns() {
+        let path = std::env::temp_dir().join("firefly_test_migration.db");
+        let _ = std::fs::remove_file(&path);
+        let pool = init_pool(&path).await.unwrap();
+
+        // user_version advanced to latest
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(version, 2);
+
+        // messages has the new columns
+        let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(cols.iter().any(|c| c == "tier"));
+        assert!(cols.iter().any(|c| c == "served_model"));
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
