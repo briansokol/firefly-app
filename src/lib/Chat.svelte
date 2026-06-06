@@ -1,13 +1,19 @@
 <script lang="ts">
-  import { getMessages, sendMessage, type Message } from "./api";
+  import {
+    getMessages,
+    sendMessage,
+    type Message,
+    type TaskHint,
+  } from "./api";
 
-  // `reasoning` holds ephemeral "thinking" tokens; it is not persisted.
-  type ChatMessage = Message & { reasoning?: string };
+  // `reasoning` is ephemeral; tier/servedModel/degraded drive the badge.
+  type ChatMessage = Message & { reasoning?: string; degraded?: boolean };
 
   let { conversationId }: { conversationId: string | null } = $props();
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
+  let task = $state<TaskHint>("agentic");
   let sending = $state(false);
   let error = $state<string | null>(null);
 
@@ -51,12 +57,16 @@
       }) - 1;
 
     try {
-      await sendMessage(id, content, (e) => {
+      await sendMessage(id, content, task, (e) => {
         if (e.type === "token") {
           messages[assistantIdx].content += e.text;
         } else if (e.type === "reasoning") {
           messages[assistantIdx].reasoning =
             (messages[assistantIdx].reasoning ?? "") + e.text;
+        } else if (e.type === "routed") {
+          messages[assistantIdx].tier = e.tier;
+          messages[assistantIdx].servedModel = e.model;
+          messages[assistantIdx].degraded = e.degraded;
         } else if (e.type === "error") {
           error = e.message;
         }
@@ -77,6 +87,11 @@
       {#each messages as m (m.id)}
         <div class="msg {m.role}">
           <div class="role">{m.role}</div>
+          {#if m.role === "assistant" && m.tier}
+            <div class="badge" class:degraded={m.degraded}>
+              {m.tier}{m.servedModel ? ` · ${m.servedModel}` : ""}{m.degraded ? " · degraded" : ""}
+            </div>
+          {/if}
           {#if m.reasoning}
             <details class="thinking">
               <summary>thinking</summary>
@@ -97,6 +112,15 @@
     {/if}
 
     <form class="composer" onsubmit={submit}>
+      <select bind:value={task} class="task" title="Task tier">
+        <option value="agentic">agentic</option>
+        <option value="write">write</option>
+        <option value="explain-file">explain-file</option>
+        <option value="code-complete">code-complete</option>
+        <option value="quick">quick</option>
+        <option value="private">private (on-device)</option>
+        <option value="best">best (cloud)</option>
+      </select>
       <textarea
         placeholder="Message Firefly…"
         bind:value={draft}
@@ -165,6 +189,29 @@
   }
   .bubble.pending {
     color: var(--muted);
+  }
+  .badge {
+    display: inline-block;
+    font-size: 0.65rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.05rem 0.5rem;
+    margin-bottom: 0.3rem;
+  }
+  .badge.degraded {
+    color: #ffd7a8;
+    border-color: #7a5a2a;
+  }
+  .task {
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    color: var(--text);
+    padding: 0 0.4rem;
+    font-family: inherit;
   }
   .thinking {
     margin-bottom: 0.35rem;

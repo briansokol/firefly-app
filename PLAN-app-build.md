@@ -101,9 +101,27 @@ The Rust router maps a request to a **tier**, then a concrete endpoint. Inputs: 
 Logic:
 1. If `task == private` → on-device endpoint only; never anything else.
 2. Else if Firefly reachable (ping its tailnet address) → home-base: POST the logical model to `http://firefly:4000/v1/chat/completions` with the device token. LiteLLM handles model choice + cloud fallback.
-3. Else → on-device endpoint for this machine (laptop: Lemonade `:13305/api/v1`; Mac: Ollama `:11434/v1`). Surface a "degraded / local" badge in the UI.
+3. Else → on-device endpoint for this machine (per-device, editable in settings):
+   - **Framework (Arch):** default iGPU Ollama `:11434/v1` running `qwen3.6:35b-a3b`; alternative NPU FastFlowLM `:52625/v1` running `gpt-oss:20b`. Both are selectable as the on-device endpoint; default to the Ollama path so on-device stays uniform with the Mac.
+   - **Kohtaro (Mac):** Ollama (or MLX) `:11434/v1` running `qwen3.6:27b`.
+
+   Unlike the home-base tier (where LiteLLM picks the model), on-device requests hit the runner directly, so the concrete model ID is part of the per-device setting. Surface a "degraded / local" badge in the UI.
 
 On-device endpoints are configured per-device in settings. **Deferred (Phase 6):** an on-device tier *on the phone itself* via a small GGUF model through llama.cpp in the Rust core (runs on the GPU/Metal, not the ANE — do not attempt Neural Engine integration).
+
+### 6.1 On-device Readiness Check
+
+The app **detects and pulls**, it does **not install**. Installing inference servers and their drivers (Ollama, FastFlowLM; ROCm/Vulkan for the iGPU, the `amdxdna` NPU driver) is system-level, privileged, and OS/hardware-specific — it stays the user's responsibility and is an explicit **non-goal**. The app owns only the parts it can do safely as an unprivileged client: detecting server state and pulling models through the server's own API.
+
+On first run and from Settings, probe the configured on-device endpoint and surface one of three states per device:
+
+1. **Ready** — server reachable *and* the configured `on_device_model` is present → green; no action.
+2. **Model missing** — server reachable but the model isn't installed → offer a one-click **Pull `<model>` (~size)** with a streamed progress bar and cancel. Drive it through the server API, never a shell install:
+   - Ollama: `GET /api/tags` to list installed models; `POST /api/pull` (streamed) to fetch.
+   - FastFlowLM: `flm list` / health on `:52625` to check; `flm pull <model>` to fetch.
+3. **Server unreachable / not installed** — red; show copy-paste install + run commands for the detected OS and a link to prereqs. **Do not** auto-run installers or elevate privileges.
+
+After a successful pull, set the context length explicitly (Ollama `num_ctx` via Modelfile/API options) so agentic requests aren't silently truncated by the 4096 default. The readiness check is advisory: it never blocks sending, and the router's normal degrade/badge behavior still applies if a probe is stale.
 
 ---
 
@@ -134,7 +152,9 @@ On-device endpoints are configured per-device in settings. **Deferred (Phase 6):
 - [ ] On-device endpoint settings per device; fallback path when Firefly is down.
 - [ ] Enforce `private` → on-device-only in the router (not just UI).
 - [ ] UI badge showing the tier/model that actually served each response.
-- **Accept:** with Firefly up, `agentic` hits home-base; with Firefly unreachable, the same request degrades to on-device; `private` never leaves the device even when Firefly is up.
+- [ ] On-device readiness check per §6.1: probe the endpoint, classify ready / model-missing / unreachable, and surface state in Settings.
+- [ ] One-click model pull (Ollama `POST /api/pull`, FastFlowLM `flm pull`) with streamed progress and cancel; set `num_ctx` after pull. No privileged installs — show manual commands when the server is absent.
+- **Accept:** with Firefly up, `agentic` hits home-base; with Firefly unreachable, the same request degrades to on-device; `private` never leaves the device even when Firefly is up. The readiness check correctly reports all three states, and a missing on-device model can be pulled from Settings with visible progress.
 
 ### Phase 3 — Sync client
 - [ ] Local schema + `sync_state`; device registration against `POST /devices/register`.

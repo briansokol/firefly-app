@@ -5,39 +5,162 @@ mod secrets;
 mod store;
 mod sync;
 
-use error::Result;
+use error::{AppError, Result};
 use llm::{ChatMsg, StreamEvent};
+use router::{RouteError, RouteInputs, TaskHint};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::time::Instant;
 use store::{Conversation, Message};
 use tauri::ipc::Channel;
 use tauri::{Manager, State};
+use tokio::sync::Mutex;
 
 const DEFAULT_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:4000";
-const DEFAULT_MODEL: &str = "fast";
+const DEFAULT_ON_DEVICE_ENDPOINT: &str = "http://localhost:11434";
+const DEFAULT_ON_DEVICE_MODEL: &str = "qwen3.6:27b";
+const DEFAULT_MODEL_CODE: &str = "code";
+const DEFAULT_MODEL_CHAT_HEAVY: &str = "chat-heavy";
+const DEFAULT_MODEL_FRONTIER: &str = "frontier";
+const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+#[derive(Default)]
+struct ReachabilityCache {
+    checked_at: Option<Instant>,
+    reachable: bool,
+}
 
 struct AppState {
     pool: SqlitePool,
+    reachability: Mutex<ReachabilityCache>,
 }
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Settings {
     firefly_endpoint: String,
-    logical_model: String,
+    on_device_endpoint: String,
+    on_device_model: String,
+    model_code: String,
+    model_chat_heavy: String,
+    model_frontier: String,
 }
 
 async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
-    let firefly_endpoint = store::get_setting(pool, "firefly_endpoint")
-        .await?
-        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
-    let logical_model = store::get_setting(pool, "logical_model")
-        .await?
-        .unwrap_or_else(|| DEFAULT_MODEL.to_string());
+    let get = |key: &'static str, default: &'static str| {
+        let pool = pool.clone();
+        async move {
+            store::get_setting(&pool, key)
+                .await
+                .map(|v| v.unwrap_or_else(|| default.to_string()))
+        }
+    };
     Ok(Settings {
-        firefly_endpoint,
-        logical_model,
+        firefly_endpoint: get("firefly_endpoint", DEFAULT_ENDPOINT).await?,
+        on_device_endpoint: get("on_device_endpoint", DEFAULT_ON_DEVICE_ENDPOINT).await?,
+        on_device_model: get("on_device_model", DEFAULT_ON_DEVICE_MODEL).await?,
+        model_code: get("model_code", DEFAULT_MODEL_CODE).await?,
+        model_chat_heavy: get("model_chat_heavy", DEFAULT_MODEL_CHAT_HEAVY).await?,
+        model_frontier: get("model_frontier", DEFAULT_MODEL_FRONTIER).await?,
     })
+}
+
+async fn firefly_reachable(state: &AppState, endpoint: &str) -> bool {
+    let mut cache = state.reachability.lock().await;
+    if router::is_fresh(cache.checked_at, Instant::now(), REACHABILITY_TTL) {
+        return cache.reachable;
+    }
+    let reachable = router::check_reachable(endpoint).await;
+    cache.checked_at = Some(Instant::now());
+    cache.reachable = reachable;
+    reachable
+}
+
+#[tauri::command]
+async fn check_firefly(state: State<'_, AppState>) -> Result<bool> {
+    let settings = load_settings(&state.pool).await?;
+    Ok(firefly_reachable(&state, &settings.firefly_endpoint).await)
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "state")]
+enum OnDevice {
+    Ready { model: String },
+    ModelMissing { model: String },
+    Unreachable,
+}
+
+fn on_device_base(endpoint: &str) -> String {
+    router::resolve_endpoint(endpoint)
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
+}
+
+#[tauri::command]
+async fn check_on_device(state: State<'_, AppState>) -> Result<OnDevice> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let resp = match client.get(format!("{base}/api/tags")).send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let tags: serde_json::Value = resp.json().await.unwrap_or_default();
+    let present = tags["models"].as_array().is_some_and(|ms| {
+        ms.iter()
+            .any(|m| m["name"].as_str() == Some(s.on_device_model.as_str()))
+    });
+    Ok(if present {
+        OnDevice::Ready { model: s.on_device_model }
+    } else {
+        OnDevice::ModelMissing { model: s.on_device_model }
+    })
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PullProgress {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+async fn pull_on_device_model(
+    state: State<'_, AppState>,
+    on_pull: Channel<PullProgress>,
+) -> Result<()> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = reqwest::Client::new();
+    let mut resp = client
+        .post(format!("{base}/api/pull"))
+        .json(&serde_json::json!({ "model": s.on_device_model, "stream": true }))
+        .send()
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    // Ollama streams newline-delimited JSON status objects.
+    while let Some(chunk) = resp.chunk().await.map_err(|e| AppError::Other(e.to_string()))? {
+        for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            if let Ok(p) = serde_json::from_slice::<serde_json::Value>(line) {
+                on_pull
+                    .send(PullProgress {
+                        status: p["status"].as_str().unwrap_or_default().to_string(),
+                        completed: p["completed"].as_u64(),
+                        total: p["total"].as_u64(),
+                    })
+                    .ok();
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -78,19 +201,26 @@ async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
 
 #[tauri::command]
 async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<()> {
-    store::set_setting(&state.pool, "firefly_endpoint", &settings.firefly_endpoint).await?;
-    store::set_setting(&state.pool, "logical_model", &settings.logical_model).await?;
+    let pool = &state.pool;
+    store::set_setting(pool, "firefly_endpoint", &settings.firefly_endpoint).await?;
+    store::set_setting(pool, "on_device_endpoint", &settings.on_device_endpoint).await?;
+    store::set_setting(pool, "on_device_model", &settings.on_device_model).await?;
+    store::set_setting(pool, "model_code", &settings.model_code).await?;
+    store::set_setting(pool, "model_chat_heavy", &settings.model_chat_heavy).await?;
+    store::set_setting(pool, "model_frontier", &settings.model_frontier).await?;
     Ok(())
 }
 
-/// Persist the user message, stream the assistant reply token-by-token over
-/// `on_token`, persist the final assistant text, and return its message id.
-/// The device token never leaves the Rust core.
+/// Persist the user message, resolve the tier/route, stream the assistant reply
+/// over `on_token`, persist the served tier+model and final text, and return the
+/// assistant message id. The device token never leaves the Rust core, and is only
+/// read for home-base/cloud routes.
 #[tauri::command]
 async fn send_message(
     state: State<'_, AppState>,
     conversation_id: String,
     content: String,
+    task: TaskHint,
     on_token: Channel<StreamEvent>,
 ) -> Result<String> {
     store::insert_message(&state.pool, &conversation_id, "user", &content).await?;
@@ -105,16 +235,43 @@ async fn send_message(
         .collect();
 
     let settings = load_settings(&state.pool).await?;
-    let token = secrets::get_token()?;
-    let endpoint = router::resolve_endpoint(&settings.firefly_endpoint);
+    let reachable = firefly_reachable(&state, &settings.firefly_endpoint).await;
+
+    let inputs = RouteInputs {
+        firefly_endpoint: &settings.firefly_endpoint,
+        on_device_endpoint: &settings.on_device_endpoint,
+        on_device_model: &settings.on_device_model,
+        model_code: &settings.model_code,
+        model_chat_heavy: &settings.model_chat_heavy,
+        model_frontier: &settings.model_frontier,
+        firefly_reachable: reachable,
+    };
+    let route = router::resolve_route(task, &inputs).map_err(|e| match e {
+        RouteError::Refused(m) | RouteError::NotConfigured(m) => AppError::Other(m),
+    })?;
+
+    let token = if route.use_token {
+        Some(secrets::get_token()?)
+    } else {
+        None
+    };
 
     on_token.send(StreamEvent::Started).ok();
+    on_token
+        .send(StreamEvent::Routed {
+            tier: route.tier.as_str().to_string(),
+            model: route.model.clone(),
+            degraded: route.degraded,
+        })
+        .ok();
 
     let assistant = store::insert_message(&state.pool, &conversation_id, "assistant", "").await?;
+    store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
+
     let full = llm::stream_chat(
-        &endpoint,
-        &token,
-        &settings.logical_model,
+        &route.endpoint,
+        token.as_deref(),
+        &route.model,
         messages,
         &on_token,
     )
@@ -133,7 +290,10 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
                 let pool = store::init_pool(&db_path).await.expect("init sqlite pool");
-                handle.manage(AppState { pool });
+                handle.manage(AppState {
+                    pool,
+                    reachability: Mutex::new(ReachabilityCache::default()),
+                });
             });
             Ok(())
         })
@@ -146,6 +306,9 @@ pub fn run() {
             get_settings,
             set_settings,
             send_message,
+            check_firefly,
+            check_on_device,
+            pull_on_device_model,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

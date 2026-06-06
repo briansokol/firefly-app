@@ -6,19 +6,48 @@
     setSettings,
     setToken,
     hasToken,
+    checkFirefly,
+    checkOnDevice,
+    pullOnDeviceModel,
     type Conversation,
     type Settings,
+    type OnDeviceStatus,
   } from "$lib/api";
   import ConversationList from "$lib/ConversationList.svelte";
   import Chat from "$lib/Chat.svelte";
 
   let conversations = $state<Conversation[]>([]);
   let selectedId = $state<string | null>(null);
-  let settings = $state<Settings>({ fireflyEndpoint: "", logicalModel: "" });
+  let settings = $state<Settings>({
+    fireflyEndpoint: "",
+    onDeviceEndpoint: "",
+    onDeviceModel: "",
+    modelCode: "",
+    modelChatHeavy: "",
+    modelFrontier: "",
+  });
+  let reachable = $state<boolean | null>(null);
+  let onDevice = $state<OnDeviceStatus | null>(null);
+  let pulling = $state(false);
+  let pullPct = $state(0);
+
+  async function pullModel() {
+    pulling = true;
+    pullPct = 0;
+    try {
+      await pullOnDeviceModel((p) => {
+        if (p.total) pullPct = Math.round((100 * (p.completed ?? 0)) / p.total);
+      });
+      onDevice = await checkOnDevice();
+    } finally {
+      pulling = false;
+    }
+  }
   let tokenPresent = $state(true);
   let showSettings = $state(false);
   let tokenInput = $state("");
   let savedNote = $state("");
+  let saveError = $state("");
 
   async function refresh() {
     conversations = await listConversations();
@@ -30,6 +59,8 @@
   $effect(() => {
     (async () => {
       settings = await getSettings();
+      checkFirefly().then((r) => (reachable = r));
+      checkOnDevice().then((r) => (onDevice = r));
       tokenPresent = await hasToken();
       if (!tokenPresent) showSettings = true;
       await refresh();
@@ -45,13 +76,24 @@
   async function saveSettings() {
     await setSettings({
       fireflyEndpoint: settings.fireflyEndpoint,
-      logicalModel: settings.logicalModel,
+      onDeviceEndpoint: settings.onDeviceEndpoint,
+      onDeviceModel: settings.onDeviceModel,
+      modelCode: settings.modelCode,
+      modelChatHeavy: settings.modelChatHeavy,
+      modelFrontier: settings.modelFrontier,
     });
+    saveError = "";
     if (tokenInput.trim()) {
-      await setToken(tokenInput.trim());
-      tokenInput = "";
+      try {
+        await setToken(tokenInput.trim());
+        tokenInput = "";
+      } catch (e) {
+        saveError = String(e);
+        return;
+      }
     }
     tokenPresent = await hasToken();
+    reachable = await checkFirefly();
     savedNote = "Saved";
     setTimeout(() => (savedNote = ""), 1500);
   }
@@ -68,7 +110,9 @@
   <main>
     <header>
       <span class="title">Firefly</span>
-      <span class="model">{settings.logicalModel || "—"}</span>
+      <span class="conn" class:down={reachable === false}>
+        {reachable === null ? "…" : reachable ? "Firefly online" : "Firefly offline"}
+      </span>
       {#if !tokenPresent}
         <span class="warn">no token set</span>
       {/if}
@@ -83,9 +127,36 @@
           Firefly endpoint
           <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
         </label>
-        <label>
-          Logical model
-          <input bind:value={settings.logicalModel} spellcheck="false" />
+        <label>On-device endpoint
+          <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
+        </label>
+        <label>On-device model
+          <input bind:value={settings.onDeviceModel} spellcheck="false" />
+        </label>
+        {#if onDevice}
+          <div class="ready" class:down={onDevice.state === "unreachable"}>
+            {#if onDevice.state === "ready"}
+              on-device ready · {onDevice.model}
+            {:else if onDevice.state === "modelMissing"}
+              model not installed
+              <button type="button" onclick={pullModel} disabled={pulling}>
+                {pulling ? `pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
+              </button>
+            {:else}
+              server unreachable: install &amp; start Ollama, then pull the model:
+              <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
+              <br />(Framework NPU: run <code>flm serve</code> + <code>flm pull {settings.onDeviceModel}</code> instead)
+            {/if}
+          </div>
+        {/if}
+        <label>Home-base model: code/write
+          <input bind:value={settings.modelCode} spellcheck="false" />
+        </label>
+        <label>Home-base model: agentic
+          <input bind:value={settings.modelChatHeavy} spellcheck="false" />
+        </label>
+        <label>Cloud model: best
+          <input bind:value={settings.modelFrontier} spellcheck="false" />
         </label>
         <label>
           Device token {tokenPresent ? "(stored — leave blank to keep)" : "(required)"}
@@ -100,6 +171,9 @@
           <button onclick={saveSettings}>Save</button>
           <span class="note">{savedNote}</span>
         </div>
+        {#if saveError}
+          <p class="save-error">{saveError}</p>
+        {/if}
       </div>
     {/if}
 
@@ -145,12 +219,36 @@
   .title {
     font-weight: 700;
   }
-  .model {
-    font-size: 0.75rem;
-    color: var(--muted);
+  .conn {
+    font-size: 0.72rem;
+    color: #9fe0a0;
     border: 1px solid var(--border);
     border-radius: 999px;
     padding: 0.1rem 0.5rem;
+  }
+  .conn.down {
+    color: #ffb3b3;
+  }
+  .ready {
+    font-size: 0.8rem;
+    color: var(--muted);
+  }
+  .ready.down {
+    color: #ffb3b3;
+  }
+  .ready code {
+    background: var(--bg);
+    padding: 0.1rem 0.3rem;
+    border-radius: 4px;
+  }
+  .ready button {
+    margin-left: 0.5rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
   }
   .warn {
     font-size: 0.75rem;
@@ -205,5 +303,10 @@
   .note {
     color: var(--muted);
     font-size: 0.8rem;
+  }
+  .save-error {
+    margin: 0.5rem 0 0;
+    color: #ffb3b3;
+    font-size: 0.85rem;
   }
 </style>
