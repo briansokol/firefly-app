@@ -15,7 +15,7 @@
 Phase 1 shipped a working streaming chat client that always routes to Firefly's home-base LiteLLM with a single logical model. Phase 2 implements the routing brain described in `PLAN-app-build.md` §6: the client picks a **tier**, LiteLLM picks the model within home-base/cloud. This is the guardrail that keeps `private` requests on-device and degrades gracefully when Firefly is unreachable.
 
 **Decisions locked with the user:**
-- On-device tier defaults to Ollama `http://localhost:11434`, model `qwen3:30b` (both editable in Settings).
+- On-device tier is a per-device editable endpoint+model (Settings). Compiled defaults: endpoint `http://localhost:11434` (Ollama OpenAI-compatible), model `qwen3.6:27b`. Recommended per-device overrides (from `local-llm-model-selections.md`): **Kohtaro (Mac)** → Ollama `:11434` / `qwen3.6:27b`; **Framework (Arch)** → iGPU Ollama `:11434` / `qwen3.6:35b-a3b` (default), or NPU FastFlowLM `:52625` / `gpt-oss:20b` as an alternative. The `on_device_endpoint`/`on_device_model` fields are free-text, so either runner works without code changes.
 - `best` when Firefly is unreachable → **refuse with an error** (queueing deferred).
 - Per-task home-base model names are **configurable** with §6 defaults (`code`, `chat-heavy`, `frontier`). Only `fast` is confirmed to exist on the live LiteLLM today; making these editable lets the user point them at real aliases without code changes. The server-side aliases are owned by `PLAN-firefly-upgrade.md` (not yet in this repo).
 - Served tier+model is **persisted per message** so the badge survives an app restart.
@@ -73,7 +73,7 @@ mod tests {
         RouteInputs {
             firefly_endpoint: "firefly.taild9c345.ts.net:4000",
             on_device_endpoint: "http://localhost:11434",
-            on_device_model: "qwen3:30b",
+            on_device_model: "qwen3.6:27b",
             model_code: "code",
             model_chat_heavy: "chat-heavy",
             model_frontier: "frontier",
@@ -86,7 +86,7 @@ mod tests {
         let r = resolve_route(TaskHint::Private, &inputs(true)).unwrap();
         assert_eq!(r.tier, Tier::OnDevice);
         assert_eq!(r.endpoint, "http://localhost:11434");
-        assert_eq!(r.model, "qwen3:30b");
+        assert_eq!(r.model, "qwen3.6:27b");
         assert!(!r.use_token);
         assert!(!r.degraded);
     }
@@ -111,7 +111,7 @@ mod tests {
     fn agentic_degrades_to_on_device_when_down() {
         let r = resolve_route(TaskHint::Agentic, &inputs(false)).unwrap();
         assert_eq!(r.tier, Tier::OnDevice);
-        assert_eq!(r.model, "qwen3:30b");
+        assert_eq!(r.model, "qwen3.6:27b");
         assert!(!r.use_token);
         assert!(r.degraded);
     }
@@ -664,7 +664,7 @@ Replace the consts + `Settings` struct + `load_settings` (currently lines ~16-40
 ```rust
 const DEFAULT_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:4000";
 const DEFAULT_ON_DEVICE_ENDPOINT: &str = "http://localhost:11434";
-const DEFAULT_ON_DEVICE_MODEL: &str = "qwen3:30b";
+const DEFAULT_ON_DEVICE_MODEL: &str = "qwen3.6:27b";
 const DEFAULT_MODEL_CODE: &str = "code";
 const DEFAULT_MODEL_CHAT_HEAVY: &str = "chat-heavy";
 const DEFAULT_MODEL_FRONTIER: &str = "frontier";
@@ -1184,7 +1184,197 @@ EOF
 
 ---
 
-## Task 9: End-to-end verification
+## Task 9: On-device readiness check + model pull
+
+**Files:**
+- Modify: `src-tauri/src/lib.rs` (two commands + handler), `src/lib/api.ts`, `src/routes/+page.svelte`
+
+Implements `PLAN-app-build.md` §6.1. The app **detects and pulls; it never installs** the server or drivers. Scope the in-app auto-pull to the **Ollama HTTP API** (covers the Mac and the Framework iGPU default). For the Framework **NPU / FastFlowLM** path, treat it like the unreachable case and show the manual `flm pull <model>` command — do not shell out from the core.
+
+> `serde_json` is used below; it is already a transitive dep via `tauri`. If it is not a direct dependency, add `serde_json = "1"` to `Cargo.toml`.
+
+- [ ] **Step 1: Add the readiness probe + pull commands to `lib.rs`**
+
+Add near the other commands. The probe hits Ollama's native `/api/tags`; the base URL is the on-device endpoint with any `/v1` suffix trimmed:
+
+```rust
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase", tag = "state")]
+enum OnDevice {
+    Ready { model: String },
+    ModelMissing { model: String },
+    Unreachable,
+}
+
+fn on_device_base(endpoint: &str) -> String {
+    router::resolve_endpoint(endpoint)
+        .trim_end_matches('/')
+        .trim_end_matches("/v1")
+        .to_string()
+}
+
+#[tauri::command]
+async fn check_on_device(state: State<'_, AppState>) -> Result<OnDevice> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = match reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(1500))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let resp = match client.get(format!("{base}/api/tags")).send().await {
+        Ok(r) => r,
+        Err(_) => return Ok(OnDevice::Unreachable),
+    };
+    let tags: serde_json::Value = resp.json().await.unwrap_or_default();
+    let present = tags["models"].as_array().is_some_and(|ms| {
+        ms.iter()
+            .any(|m| m["name"].as_str() == Some(s.on_device_model.as_str()))
+    });
+    Ok(if present {
+        OnDevice::Ready { model: s.on_device_model }
+    } else {
+        OnDevice::ModelMissing { model: s.on_device_model }
+    })
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct PullProgress {
+    status: String,
+    completed: Option<u64>,
+    total: Option<u64>,
+}
+
+#[tauri::command]
+async fn pull_on_device_model(
+    state: State<'_, AppState>,
+    on_pull: Channel<PullProgress>,
+) -> Result<()> {
+    let s = load_settings(&state.pool).await?;
+    let base = on_device_base(&s.on_device_endpoint);
+    let client = reqwest::Client::new();
+    let mut resp = client
+        .post(format!("{base}/api/pull"))
+        .json(&serde_json::json!({ "model": s.on_device_model, "stream": true }))
+        .send()
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    // Ollama streams newline-delimited JSON status objects.
+    while let Some(chunk) = resp.chunk().await.map_err(|e| AppError::Other(e.to_string()))? {
+        for line in chunk.split(|&b| b == b'\n').filter(|l| !l.is_empty()) {
+            if let Ok(p) = serde_json::from_slice::<serde_json::Value>(line) {
+                on_pull
+                    .send(PullProgress {
+                        status: p["status"].as_str().unwrap_or_default().to_string(),
+                        completed: p["completed"].as_u64(),
+                        total: p["total"].as_u64(),
+                    })
+                    .ok();
+            }
+        }
+    }
+    Ok(())
+}
+```
+
+- [ ] **Step 2: Register both commands** — add `check_on_device,` and `pull_on_device_model,` to the `tauri::generate_handler![...]` list.
+
+- [ ] **Step 3: Build** — `cd src-tauri && cargo build`. Expected: compiles (these commands do live IO and aren't unit-tested, matching `check_reachable`).
+
+- [ ] **Step 4: Add `api.ts` wrappers**
+
+```typescript
+export type OnDeviceStatus =
+  | { state: "ready"; model: string }
+  | { state: "modelMissing"; model: string }
+  | { state: "unreachable" };
+
+export interface PullProgress {
+  status: string;
+  completed?: number;
+  total?: number;
+}
+
+export const checkOnDevice = () => invoke<OnDeviceStatus>("check_on_device");
+
+export function pullOnDeviceModel(
+  onProgress: (p: PullProgress) => void,
+): Promise<void> {
+  const channel = new Channel<PullProgress>();
+  channel.onmessage = onProgress;
+  return invoke<void>("pull_on_device_model", { onPull: channel });
+}
+```
+
+- [ ] **Step 5: Readiness UI in `+page.svelte` Settings panel**
+
+Add state + handlers in `<script>` (import `checkOnDevice`, `pullOnDeviceModel`, `type OnDeviceStatus`):
+
+```svelte
+  let onDevice = $state<OnDeviceStatus | null>(null);
+  let pulling = $state(false);
+  let pullPct = $state(0);
+
+  // in the mount $effect, after settings load:
+  checkOnDevice().then((r) => (onDevice = r));
+
+  async function pullModel() {
+    pulling = true;
+    pullPct = 0;
+    try {
+      await pullOnDeviceModel((p) => {
+        if (p.total) pullPct = Math.round((100 * (p.completed ?? 0)) / p.total);
+      });
+      onDevice = await checkOnDevice();
+    } finally {
+      pulling = false;
+    }
+  }
+```
+
+In the `.settings` panel, after the On-device model input, render the three states:
+
+```svelte
+        {#if onDevice}
+          <div class="ready" class:down={onDevice.state === "unreachable"}>
+            {#if onDevice.state === "ready"}
+              on-device ready · {onDevice.model}
+            {:else if onDevice.state === "modelMissing"}
+              model not installed
+              <button type="button" onclick={pullModel} disabled={pulling}>
+                {pulling ? `pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
+              </button>
+            {:else}
+              server unreachable — install &amp; start Ollama, then pull the model:
+              <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
+              <br />(Framework NPU: run <code>flm serve</code> + <code>flm pull {settings.onDeviceModel}</code> instead)
+            {/if}
+          </div>
+        {/if}
+```
+
+- [ ] **Step 6: Typecheck** — `npm run check`. Expected: 0 errors.
+
+> **Follow-up (out of scope here, note for `llm.rs`):** on-device chat requests should send `options.num_ctx` (Ollama) so agentic context isn't truncated by the 4096 default. Wire this into the on-device request body when the router resolves an on-device route.
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add src-tauri/src/lib.rs src/lib/api.ts src/routes/+page.svelte
+git commit -m "$(cat <<'EOF'
+Add on-device readiness check and one-click Ollama model pull
+
+Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+EOF
+)"
+```
+
+---
+
+## Task 10: End-to-end verification
 
 - [ ] **Step 1: Tests + typecheck**
 
@@ -1203,10 +1393,11 @@ cd /Users/bsokol/WebProjects/firefly-app && source "$HOME/.cargo/env" && npm run
 - [ ] **Step 3: Verify the acceptance criteria (manual, in the app window)**
 
 1. **agentic → home-base (Firefly up):** header shows "Firefly online". Select task `agentic`, send a message. The assistant badge reads `home-base · chat-heavy`. (If LiteLLM lacks a `chat-heavy` alias and you get a model error, set **Home-base model — agentic** to `fast` in Settings and resend — tier routing is what's under test.)
-2. **private → on-device even when Firefly is up:** select `private`, send. Badge reads `on-device · qwen3:30b`; the request hits Ollama at localhost (requires `ollama serve` running with `qwen3:30b`). Confirm it never contacts Firefly.
-3. **degrade when Firefly unreachable:** in Settings set **Firefly endpoint** to `http://firefly.taild9c345.ts.net:4099` (wrong port) and Save → header flips to "Firefly offline" within ~5s. Select `agentic`, send → badge reads `on-device · qwen3:30b · degraded`. Restore the endpoint afterward.
+2. **private → on-device even when Firefly is up:** select `private`, send. Badge reads `on-device · qwen3.6:27b`; the request hits Ollama at localhost (requires `ollama serve` running with `qwen3.6:27b`). Confirm it never contacts Firefly.
+3. **degrade when Firefly unreachable:** in Settings set **Firefly endpoint** to `http://firefly.taild9c345.ts.net:4099` (wrong port) and Save → header flips to "Firefly offline" within ~5s. Select `agentic`, send → badge reads `on-device · qwen3.6:27b · degraded`. Restore the endpoint afterward.
 4. **best refuses offline:** with the bad endpoint still set, select `best`, send → an inline error appears ("best/frontier requires Firefly…"). Restore endpoint; `best` then routes `cloud · frontier`.
 5. **badge persists across restart:** quit the app, relaunch, reopen a conversation → assistant messages still show their tier/model badge (loaded from the `tier`/`served_model` columns).
+6. **on-device readiness (§6.1):** in Settings, with Ollama stopped → state reads "server unreachable" with manual commands. Start `ollama serve` without the model → state reads "model not installed"; click **Pull** and watch progress reach 100%, then the state flips to "on-device ready · `<model>`". Confirm the app never ran a privileged install.
 
 - [ ] **Step 4: Finish the branch**
 
@@ -1227,4 +1418,5 @@ Use **superpowers:finishing-a-development-branch**. Per the user's stated prefer
 - Phase 2 task "on-device endpoint settings per device + fallback" → Tasks 4, 8 + degrade arms. ✓
 - Phase 2 task "enforce private in router" → `Private` arm returns on-device unconditionally. ✓
 - Phase 2 task "UI badge for served tier/model" → Tasks 3 (persist), 4 (`Routed` event), 7 (render). ✓
-- Acceptance (agentic up / degrade down / private never leaves) → Task 9 Step 3. ✓
+- Phase 2 task "on-device readiness check + model pull" (§6.1) → Task 9 (`check_on_device`/`pull_on_device_model` + Settings UI), detect-not-install. ✓
+- Acceptance (agentic up / degrade down / private never leaves) → Task 10 Step 3. ✓
