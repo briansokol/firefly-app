@@ -316,7 +316,7 @@ async fn mark_pushed(pool: &SqlitePool, table: &str, ids: &[String]) -> Result<(
     if ids.is_empty() {
         return Ok(());
     }
-    let placeholders = std::iter::repeat("?").take(ids.len()).collect::<Vec<_>>().join(",");
+    let placeholders = std::iter::repeat_n("?", ids.len()).collect::<Vec<_>>().join(",");
     // `table` is a trusted, hard-coded caller argument; ids are bound params.
     let sql = format!("UPDATE {table} SET pending_push = 0 WHERE id IN ({placeholders})");
     let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
