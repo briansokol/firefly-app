@@ -33,6 +33,8 @@ export interface Settings {
   modelCode: string;
   modelChatHeavy: string;
   modelFrontier: string;
+  syncEndpoint: string;
+  deviceName: string;
 }
 
 export type StreamEvent =

@@ -25,6 +25,8 @@
     modelCode: "",
     modelChatHeavy: "",
     modelFrontier: "",
+    syncEndpoint: "",
+    deviceName: "",
   });
   let reachable = $state<boolean | null>(null);
   let onDevice = $state<OnDeviceStatus | null>(null);
@@ -81,6 +83,8 @@
       modelCode: settings.modelCode,
       modelChatHeavy: settings.modelChatHeavy,
       modelFrontier: settings.modelFrontier,
+      syncEndpoint: settings.syncEndpoint,
+      deviceName: settings.deviceName,
     });
     saveError = "";
     if (tokenInput.trim()) {
@@ -126,6 +130,12 @@
         <label>
           Firefly endpoint
           <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
+        </label>
+        <label>Sync endpoint
+          <input bind:value={settings.syncEndpoint} spellcheck="false" />
+        </label>
+        <label>Device name
+          <input bind:value={settings.deviceName} spellcheck="false" />
         </label>
         <label>On-device endpoint
           <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
