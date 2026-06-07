@@ -63,6 +63,16 @@ export const setSyncToken = (token: string) =>
 
 export const hasSyncToken = () => invoke<boolean>("has_sync_token");
 
+export interface SyncStatus {
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  cursor: string;
+  message?: string | null;
+}
+
+export const syncNow = () => invoke<SyncStatus>("sync_now");
+
 export const getSettings = () => invoke<Settings>("get_settings");
 
 export const setSettings = (settings: Settings) =>
