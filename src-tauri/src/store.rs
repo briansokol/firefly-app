@@ -6,6 +6,13 @@ use sqlx::Row;
 use std::path::Path;
 use uuid::Uuid;
 
+/// Contract timestamp format: ISO-8601 UTC, millisecond precision, `Z` suffix
+/// (e.g. `2026-06-06T14:03:21.118Z`). Required so the server's lexical sync
+/// cursor compares correctly. See docs/API-CONTRACT.md §3.0.
+pub fn now_iso() -> String {
+    Utc::now().format("%Y-%m-%dT%H:%M:%S%.3fZ").to_string()
+}
+
 const MIGRATION: &str = "
 CREATE TABLE IF NOT EXISTS conversations (
   id         TEXT PRIMARY KEY,
@@ -132,7 +139,7 @@ pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Ve
 
 pub async fn create_conversation(pool: &SqlitePool, title: &str) -> Result<Conversation> {
     let id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = now_iso();
     sqlx::query("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)")
         .bind(&id)
         .bind(title)
@@ -155,7 +162,7 @@ pub async fn insert_message(
     content: &str,
 ) -> Result<Message> {
     let id = Uuid::new_v4().to_string();
-    let now = Utc::now().to_rfc3339();
+    let now = now_iso();
     sqlx::query(
         "INSERT INTO messages (id, conversation_id, role, content, created_at, tier, served_model) \
          VALUES (?, ?, ?, ?, ?, NULL, NULL)",
@@ -278,5 +285,18 @@ mod tests {
             .unwrap();
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn now_iso_is_millisecond_z() {
+        let ts = now_iso();
+        // e.g. 2026-06-06T14:03:21.118Z
+        assert!(ts.ends_with('Z'), "must end with Z: {ts}");
+        assert!(ts.contains('T'), "must contain T: {ts}");
+        // millisecond precision: ".###Z" => the 5th char from the end is '.'
+        let dot = ts.as_bytes()[ts.len() - 5];
+        assert_eq!(dot, b'.', "expected ms precision in {ts}");
+        // and it round-trips through chrono's RFC3339 parser
+        chrono::DateTime::parse_from_rfc3339(&ts).expect("parseable");
     }
 }
