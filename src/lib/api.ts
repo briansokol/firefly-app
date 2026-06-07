@@ -56,6 +56,11 @@ export const setToken = (token: string) => invoke<void>("set_token", { token });
 
 export const hasToken = () => invoke<boolean>("has_token");
 
+export const setSyncToken = (token: string) =>
+  invoke<void>("set_sync_token", { token });
+
+export const hasSyncToken = () => invoke<boolean>("has_sync_token");
+
 export const getSettings = () => invoke<Settings>("get_settings");
 
 export const setSettings = (settings: Settings) =>

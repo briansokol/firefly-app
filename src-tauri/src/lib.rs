@@ -195,6 +195,16 @@ fn has_token() -> bool {
 }
 
 #[tauri::command]
+fn set_sync_token(token: String) -> Result<()> {
+    secrets::set_sync_token(&token)
+}
+
+#[tauri::command]
+fn has_sync_token() -> bool {
+    secrets::has_sync_token()
+}
+
+#[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
     load_settings(&state.pool).await
 }
@@ -303,6 +313,8 @@ pub fn run() {
             create_conversation,
             set_token,
             has_token,
+            set_sync_token,
+            has_sync_token,
             get_settings,
             set_settings,
             send_message,
