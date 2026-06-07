@@ -298,7 +298,10 @@ async fn do_sync(
     };
     let _ = registered_now;
 
-    // 2. Push the outbound queue.
+    // 2. Push the outbound queue. Marking rows pushed is not transactional with
+    // the network push, so a crash mid-flush can re-send some rows next cycle.
+    // That is safe: the sync service push is idempotent (messages are insert-only,
+    // conversations/memories are last-write-wins by updated_at) per API-CONTRACT.md §3.3.
     let conv = match store::get_pending_conversations(pool, &device_user).await {
         Ok(c) => c,
         Err(e) => return off(&e.to_string(), state.cursor),
