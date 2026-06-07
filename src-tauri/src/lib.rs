@@ -241,7 +241,7 @@ async fn send_message(
     task: TaskHint,
     on_token: Channel<StreamEvent>,
 ) -> Result<String> {
-    store::insert_message(&state.pool, &conversation_id, "user", &content).await?;
+    store::insert_message(&state.pool, &conversation_id, "user", &content, true).await?;
 
     let history = store::get_messages(&state.pool, &conversation_id).await?;
     let messages: Vec<ChatMsg> = history
@@ -283,7 +283,8 @@ async fn send_message(
         })
         .ok();
 
-    let assistant = store::insert_message(&state.pool, &conversation_id, "assistant", "").await?;
+    let assistant =
+        store::insert_message(&state.pool, &conversation_id, "assistant", "", false).await?;
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
 
     let full = llm::stream_chat(
