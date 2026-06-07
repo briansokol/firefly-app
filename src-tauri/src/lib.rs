@@ -312,14 +312,13 @@ async fn do_sync(
     };
     let pushed = conv.len() + msgs.len();
     if pushed > 0 {
-        let conv_ids: Vec<String> = conv.iter().map(|c| c.id.clone()).collect();
         let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
         if let Err(e) =
             sync::push(&settings.sync_endpoint, &token, conv.clone(), msgs.clone()).await
         {
             return off(&e.to_string(), state.cursor);
         }
-        if let Err(e) = store::mark_conversations_pushed(pool, &conv_ids).await {
+        if let Err(e) = store::mark_conversations_pushed(pool, &conv).await {
             return off(&e.to_string(), state.cursor);
         }
         if let Err(e) = store::mark_messages_pushed(pool, &msg_ids).await {
@@ -381,7 +380,8 @@ async fn send_message(
     task: TaskHint,
     on_token: Channel<StreamEvent>,
 ) -> Result<String> {
-    store::insert_message(&state.pool, &conversation_id, "user", &content, true).await?;
+    let local_only = matches!(task, TaskHint::Private);
+    store::insert_message(&state.pool, &conversation_id, "user", &content, !local_only, local_only).await?;
 
     let history = store::get_messages(&state.pool, &conversation_id).await?;
     let messages: Vec<ChatMsg> = history
@@ -424,7 +424,7 @@ async fn send_message(
         .ok();
 
     let assistant =
-        store::insert_message(&state.pool, &conversation_id, "assistant", "", false).await?;
+        store::insert_message(&state.pool, &conversation_id, "assistant", "", false, local_only).await?;
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
 
     let full = llm::stream_chat(

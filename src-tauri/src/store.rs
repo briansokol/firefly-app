@@ -89,7 +89,7 @@ pub struct SyncState {
     pub cursor: String,
 }
 
-const SCHEMA_VERSION: i64 = 3;
+const SCHEMA_VERSION: i64 = 4;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -138,6 +138,13 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
         .execute(&pool)
         .await?;
         version = 3;
+    }
+
+    if version < 4 {
+        sqlx::raw_sql("ALTER TABLE messages ADD COLUMN local_only INTEGER NOT NULL DEFAULT 0;")
+            .execute(&pool)
+            .await?;
+        version = 4;
     }
 
     // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
@@ -195,12 +202,13 @@ pub async fn insert_message(
     role: &str,
     content: &str,
     pending: bool,
+    local_only: bool,
 ) -> Result<Message> {
     let id = Uuid::new_v4().to_string();
     let now = now_iso();
     sqlx::query(
-        "INSERT INTO messages (id, conversation_id, role, content, created_at, tier, served_model, pending_push) \
-         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?)",
+        "INSERT INTO messages (id, conversation_id, role, content, created_at, tier, served_model, pending_push, local_only) \
+         VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)",
     )
     .bind(&id)
     .bind(conversation_id)
@@ -208,6 +216,7 @@ pub async fn insert_message(
     .bind(content)
     .bind(&now)
     .bind(if pending { 1 } else { 0 })
+    .bind(if local_only { 1 } else { 0 })
     .execute(pool)
     .await?;
     sqlx::query("UPDATE conversations SET updated_at = ?, pending_push = 1 WHERE id = ?")
@@ -231,11 +240,16 @@ pub async fn update_message_content(
     message_id: &str,
     content: &str,
 ) -> Result<()> {
-    sqlx::query("UPDATE messages SET content = ?, pending_push = 1 WHERE id = ?")
-        .bind(content)
-        .bind(message_id)
-        .execute(pool)
-        .await?;
+    // A local_only (private) message is never queued for push, even once its
+    // streamed content is finalized.
+    sqlx::query(
+        "UPDATE messages SET content = ?, \
+         pending_push = CASE WHEN local_only = 1 THEN 0 ELSE 1 END WHERE id = ?",
+    )
+    .bind(content)
+    .bind(message_id)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 
@@ -327,8 +341,20 @@ async fn mark_pushed(pool: &SqlitePool, table: &str, ids: &[String]) -> Result<(
     Ok(())
 }
 
-pub async fn mark_conversations_pushed(pool: &SqlitePool, ids: &[String]) -> Result<()> {
-    mark_pushed(pool, "conversations", ids).await
+/// Clear the push flag only if the conversation has not been re-dirtied since it
+/// was snapshotted for the push. A concurrent `insert_message` bumps the row's
+/// `updated_at` and re-sets `pending_push = 1`; guarding on `updated_at` avoids
+/// silently dropping that pending edit. (Sub-millisecond races self-heal: the
+/// next message re-queues the row.)
+pub async fn mark_conversations_pushed(pool: &SqlitePool, convs: &[ConvRow]) -> Result<()> {
+    for c in convs {
+        sqlx::query("UPDATE conversations SET pending_push = 0 WHERE id = ? AND updated_at = ?")
+            .bind(&c.id)
+            .bind(&c.updated_at)
+            .execute(pool)
+            .await?;
+    }
+    Ok(())
 }
 
 pub async fn mark_messages_pushed(pool: &SqlitePool, ids: &[String]) -> Result<()> {
@@ -435,7 +461,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
 
         let msg_cols: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
@@ -445,6 +471,7 @@ mod tests {
         assert!(msg_cols.iter().any(|c| c == "tier"));
         assert!(msg_cols.iter().any(|c| c == "served_model"));
         assert!(msg_cols.iter().any(|c| c == "pending_push"));
+        assert!(msg_cols.iter().any(|c| c == "local_only"));
 
         let conv_cols: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('conversations')")
@@ -480,7 +507,7 @@ mod tests {
     async fn pending_then_pushed_clears_queue() {
         let pool = fresh_pool("firefly_test_queue.db").await;
         let c = create_conversation(&pool, "hi").await.unwrap();
-        insert_message(&pool, &c.id, "user", "yo", true).await.unwrap();
+        insert_message(&pool, &c.id, "user", "yo", true, false).await.unwrap();
 
         let pc = get_pending_conversations(&pool, "user-1").await.unwrap();
         let pm = get_pending_messages(&pool).await.unwrap();
@@ -488,11 +515,53 @@ mod tests {
         assert_eq!(pc[0].user_id, "user-1");
         assert_eq!(pm.len(), 1);
 
-        mark_conversations_pushed(&pool, &[c.id.clone()]).await.unwrap();
+        mark_conversations_pushed(&pool, &pc).await.unwrap();
         mark_messages_pushed(&pool, &[pm[0].id.clone()]).await.unwrap();
 
         assert!(get_pending_conversations(&pool, "user-1").await.unwrap().is_empty());
         assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn private_message_is_never_queued_for_push() {
+        let pool = fresh_pool("firefly_test_private.db").await;
+        let c = create_conversation(&pool, "secret").await.unwrap();
+        // private user message: pending=false, local_only=true
+        insert_message(&pool, &c.id, "user", "ssh", false, true).await.unwrap();
+        // private assistant placeholder, then finalized via update_message_content
+        let a = insert_message(&pool, &c.id, "assistant", "", false, true).await.unwrap();
+        update_message_content(&pool, &a.id, "secret reply").await.unwrap();
+
+        // neither private message is ever pending for push
+        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+
+        // a normal (non-private) message in the same conversation DOES queue
+        let n = insert_message(&pool, &c.id, "user", "hi", true, false).await.unwrap();
+        let pm = get_pending_messages(&pool).await.unwrap();
+        assert_eq!(pm.len(), 1);
+        assert_eq!(pm[0].id, n.id);
+    }
+
+    #[tokio::test]
+    async fn mark_conversations_pushed_is_guarded_by_updated_at() {
+        let pool = fresh_pool("firefly_test_markguard.db").await;
+        let c = create_conversation(&pool, "t").await.unwrap();
+        let snapshot = get_pending_conversations(&pool, "u").await.unwrap();
+        assert_eq!(snapshot.len(), 1);
+
+        // ensure a strictly later millisecond timestamp for the re-dirtying write
+        tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+        // a concurrent insert re-dirties the conversation (new updated_at, pending_push=1)
+        insert_message(&pool, &c.id, "user", "later", true, false).await.unwrap();
+
+        // marking with the STALE snapshot must NOT clear the flag
+        mark_conversations_pushed(&pool, &snapshot).await.unwrap();
+        assert_eq!(get_pending_conversations(&pool, "u").await.unwrap().len(), 1);
+
+        // marking with the CURRENT snapshot clears it
+        let current = get_pending_conversations(&pool, "u").await.unwrap();
+        mark_conversations_pushed(&pool, &current).await.unwrap();
+        assert!(get_pending_conversations(&pool, "u").await.unwrap().is_empty());
     }
 
     #[tokio::test]
