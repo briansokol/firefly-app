@@ -48,7 +48,7 @@ pub struct Message {
     pub served_model: Option<String>,
 }
 
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 3;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -72,6 +72,31 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
         .execute(&pool)
         .await?;
         version = 2;
+    }
+
+    if version < 3 {
+        sqlx::raw_sql(
+            "ALTER TABLE conversations ADD COLUMN user_id TEXT;\n\
+             ALTER TABLE conversations ADD COLUMN pending_push INTEGER NOT NULL DEFAULT 1;\n\
+             ALTER TABLE messages ADD COLUMN pending_push INTEGER NOT NULL DEFAULT 1;\n\
+             CREATE TABLE IF NOT EXISTS sync_state (\n\
+               id        INTEGER PRIMARY KEY CHECK (id = 1),\n\
+               device_id TEXT NOT NULL DEFAULT '',\n\
+               user_id   TEXT NOT NULL DEFAULT '',\n\
+               cursor    TEXT NOT NULL DEFAULT ''\n\
+             );\n\
+             INSERT OR IGNORE INTO sync_state (id, device_id, user_id, cursor) VALUES (1, '', '', '');\n\
+             CREATE TABLE IF NOT EXISTS memories (\n\
+               id                  TEXT PRIMARY KEY,\n\
+               user_id             TEXT NOT NULL,\n\
+               text                TEXT NOT NULL,\n\
+               source_conversation TEXT,\n\
+               updated_at          TEXT NOT NULL\n\
+             );",
+        )
+        .execute(&pool)
+        .await?;
+        version = 3;
     }
 
     // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
@@ -216,20 +241,41 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let pool = init_pool(&path).await.unwrap();
 
-        // user_version advanced to latest
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 2);
+        assert_eq!(version, 3);
 
-        // messages has the new columns
-        let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
+        let msg_cols: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(msg_cols.iter().any(|c| c == "tier"));
+        assert!(msg_cols.iter().any(|c| c == "served_model"));
+        assert!(msg_cols.iter().any(|c| c == "pending_push"));
+
+        let conv_cols: Vec<String> =
+            sqlx::query_scalar("SELECT name FROM pragma_table_info('conversations')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(conv_cols.iter().any(|c| c == "user_id"));
+        assert!(conv_cols.iter().any(|c| c == "pending_push"));
+
+        // sync_state seeded with exactly one row
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_state")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n, 1);
+
+        // memories table exists
+        sqlx::query("SELECT id, user_id, text, source_conversation, updated_at FROM memories")
             .fetch_all(&pool)
             .await
             .unwrap();
-        assert!(cols.iter().any(|c| c == "tier"));
-        assert!(cols.iter().any(|c| c == "served_model"));
 
         let _ = std::fs::remove_file(&path);
     }
