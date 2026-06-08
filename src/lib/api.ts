@@ -35,6 +35,7 @@ export interface Settings {
   modelFrontier: string;
   syncEndpoint: string;
   deviceName: string;
+  memoryEnabled: boolean;
 }
 
 export type StreamEvent =
