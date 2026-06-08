@@ -26,6 +26,7 @@ const DEFAULT_MODEL_CHAT_HEAVY: &str = "chat-heavy";
 const DEFAULT_MODEL_FRONTIER: &str = "frontier";
 const DEFAULT_SYNC_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:8788";
 const DEFAULT_DEVICE_NAME: &str = "firefly-device";
+const DEFAULT_MEMORY_ENABLED: &str = "true";
 const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Default)]
@@ -51,6 +52,7 @@ struct Settings {
     model_frontier: String,
     sync_endpoint: String,
     device_name: String,
+    memory_enabled: bool,
 }
 
 async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
@@ -71,6 +73,10 @@ async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
         model_frontier: get("model_frontier", DEFAULT_MODEL_FRONTIER).await?,
         sync_endpoint: get("sync_endpoint", DEFAULT_SYNC_ENDPOINT).await?,
         device_name: get("device_name", DEFAULT_DEVICE_NAME).await?,
+        memory_enabled: get("memory_enabled", DEFAULT_MEMORY_ENABLED)
+            .await?
+            .parse()
+            .unwrap_or(true),
     })
 }
 
@@ -229,6 +235,12 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
     store::set_setting(pool, "model_frontier", &settings.model_frontier).await?;
     store::set_setting(pool, "sync_endpoint", &settings.sync_endpoint).await?;
     store::set_setting(pool, "device_name", &settings.device_name).await?;
+    store::set_setting(
+        pool,
+        "memory_enabled",
+        if settings.memory_enabled { "true" } else { "false" },
+    )
+    .await?;
     Ok(())
 }
 
