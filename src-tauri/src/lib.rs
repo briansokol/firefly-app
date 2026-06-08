@@ -397,7 +397,7 @@ async fn send_message(
     store::insert_message(&state.pool, &conversation_id, "user", &content, !local_only, local_only).await?;
 
     let history = store::get_messages(&state.pool, &conversation_id).await?;
-    let messages: Vec<ChatMsg> = history
+    let mut messages: Vec<ChatMsg> = history
         .iter()
         .map(|m| ChatMsg {
             role: m.role.clone(),
@@ -439,6 +439,25 @@ async fn send_message(
     let assistant =
         store::insert_message(&state.pool, &conversation_id, "assistant", "", false, local_only).await?;
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
+
+    if settings.memory_enabled && route.tier == router::Tier::HomeBase {
+        if let Ok(sync_token) = secrets::get_sync_token() {
+            let user_id = store::get_sync_state(&state.pool)
+                .await
+                .map(|s| s.user_id)
+                .unwrap_or_default();
+            match sync::search_memories(&settings.sync_endpoint, &sync_token, &content, &user_id, 8)
+                .await
+            {
+                Ok(mems) => {
+                    if let Some(sys) = memory::build_memory_message(&mems) {
+                        messages.insert(0, sys);
+                    }
+                }
+                Err(e) => eprintln!("memory search failed, sending without context: {e}"),
+            }
+        }
+    }
 
     let full = llm::stream_chat(
         &route.endpoint,
