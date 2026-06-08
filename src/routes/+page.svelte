@@ -6,6 +6,10 @@
     setSettings,
     setToken,
     hasToken,
+    syncNow,
+    setSyncToken,
+    hasSyncToken,
+    type SyncStatus,
     checkFirefly,
     checkOnDevice,
     pullOnDeviceModel,
@@ -25,6 +29,8 @@
     modelCode: "",
     modelChatHeavy: "",
     modelFrontier: "",
+    syncEndpoint: "",
+    deviceName: "",
   });
   let reachable = $state<boolean | null>(null);
   let onDevice = $state<OnDeviceStatus | null>(null);
@@ -44,6 +50,25 @@
     }
   }
   let tokenPresent = $state(true);
+  let syncing = $state(false);
+  let syncStatus = $state<SyncStatus | null>(null);
+  let syncTick = $state(0);
+  let syncTokenInput = $state("");
+  let syncTokenPresent = $state(true);
+
+  async function runSync() {
+    if (syncing) return;
+    syncing = true;
+    try {
+      syncStatus = await syncNow();
+      if (syncStatus.pulled > 0) {
+        await refresh();
+        syncTick += 1; // nudge Chat to refetch the open conversation
+      }
+    } finally {
+      syncing = false;
+    }
+  }
   let showSettings = $state(false);
   let tokenInput = $state("");
   let savedNote = $state("");
@@ -62,8 +87,10 @@
       checkFirefly().then((r) => (reachable = r));
       checkOnDevice().then((r) => (onDevice = r));
       tokenPresent = await hasToken();
+      syncTokenPresent = await hasSyncToken();
       if (!tokenPresent) showSettings = true;
       await refresh();
+      runSync();
     })();
   });
 
@@ -81,6 +108,8 @@
       modelCode: settings.modelCode,
       modelChatHeavy: settings.modelChatHeavy,
       modelFrontier: settings.modelFrontier,
+      syncEndpoint: settings.syncEndpoint,
+      deviceName: settings.deviceName,
     });
     saveError = "";
     if (tokenInput.trim()) {
@@ -92,6 +121,16 @@
         return;
       }
     }
+    if (syncTokenInput.trim()) {
+      try {
+        await setSyncToken(syncTokenInput.trim());
+        syncTokenInput = "";
+      } catch (e) {
+        saveError = String(e);
+        return;
+      }
+    }
+    syncTokenPresent = await hasSyncToken();
     tokenPresent = await hasToken();
     reachable = await checkFirefly();
     savedNote = "Saved";
@@ -113,6 +152,16 @@
       <span class="conn" class:down={reachable === false}>
         {reachable === null ? "…" : reachable ? "Firefly online" : "Firefly offline"}
       </span>
+      <span class="conn" class:down={syncStatus?.ok === false}>
+        {syncing
+          ? "syncing…"
+          : syncStatus == null
+            ? "sync idle"
+            : syncStatus.ok
+              ? "synced"
+              : syncStatus.message ?? "offline"}
+      </span>
+      <button class="gear" onclick={runSync} disabled={syncing}>⟳ Sync now</button>
       {#if !tokenPresent}
         <span class="warn">no token set</span>
       {/if}
@@ -126,6 +175,12 @@
         <label>
           Firefly endpoint
           <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
+        </label>
+        <label>Sync endpoint
+          <input bind:value={settings.syncEndpoint} spellcheck="false" />
+        </label>
+        <label>Device name
+          <input bind:value={settings.deviceName} spellcheck="false" />
         </label>
         <label>On-device endpoint
           <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
@@ -167,6 +222,15 @@
             spellcheck="false"
           />
         </label>
+        <label>
+          Sync token {syncTokenPresent ? "(stored — leave blank to keep)" : "(required)"}
+          <input
+            type="password"
+            bind:value={syncTokenInput}
+            placeholder="sync-…"
+            spellcheck="false"
+          />
+        </label>
         <div class="actions">
           <button onclick={saveSettings}>Save</button>
           <span class="note">{savedNote}</span>
@@ -177,7 +241,7 @@
       </div>
     {/if}
 
-    <Chat conversationId={selectedId} />
+    <Chat conversationId={selectedId} refreshSignal={syncTick} />
   </main>
 </div>
 

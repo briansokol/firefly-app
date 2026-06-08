@@ -10,6 +10,7 @@ use llm::{ChatMsg, StreamEvent};
 use router::{RouteError, RouteInputs, TaskHint};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
+use std::sync::Arc;
 use std::time::Instant;
 use store::{Conversation, Message};
 use tauri::ipc::Channel;
@@ -22,6 +23,8 @@ const DEFAULT_ON_DEVICE_MODEL: &str = "qwen3.6:27b";
 const DEFAULT_MODEL_CODE: &str = "code";
 const DEFAULT_MODEL_CHAT_HEAVY: &str = "chat-heavy";
 const DEFAULT_MODEL_FRONTIER: &str = "frontier";
+const DEFAULT_SYNC_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:8788";
+const DEFAULT_DEVICE_NAME: &str = "firefly-device";
 const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Default)]
@@ -33,6 +36,7 @@ struct ReachabilityCache {
 struct AppState {
     pool: SqlitePool,
     reachability: Mutex<ReachabilityCache>,
+    sync_guard: Arc<Mutex<()>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,6 +48,8 @@ struct Settings {
     model_code: String,
     model_chat_heavy: String,
     model_frontier: String,
+    sync_endpoint: String,
+    device_name: String,
 }
 
 async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
@@ -62,6 +68,8 @@ async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
         model_code: get("model_code", DEFAULT_MODEL_CODE).await?,
         model_chat_heavy: get("model_chat_heavy", DEFAULT_MODEL_CHAT_HEAVY).await?,
         model_frontier: get("model_frontier", DEFAULT_MODEL_FRONTIER).await?,
+        sync_endpoint: get("sync_endpoint", DEFAULT_SYNC_ENDPOINT).await?,
+        device_name: get("device_name", DEFAULT_DEVICE_NAME).await?,
     })
 }
 
@@ -195,6 +203,16 @@ fn has_token() -> bool {
 }
 
 #[tauri::command]
+fn set_sync_token(token: String) -> Result<()> {
+    secrets::set_sync_token(&token)
+}
+
+#[tauri::command]
+fn has_sync_token() -> bool {
+    secrets::has_sync_token()
+}
+
+#[tauri::command]
 async fn get_settings(state: State<'_, AppState>) -> Result<Settings> {
     load_settings(&state.pool).await
 }
@@ -208,7 +226,146 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
     store::set_setting(pool, "model_code", &settings.model_code).await?;
     store::set_setting(pool, "model_chat_heavy", &settings.model_chat_heavy).await?;
     store::set_setting(pool, "model_frontier", &settings.model_frontier).await?;
+    store::set_setting(pool, "sync_endpoint", &settings.sync_endpoint).await?;
+    store::set_setting(pool, "device_name", &settings.device_name).await?;
     Ok(())
+}
+
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct SyncSummary {
+    ok: bool,
+    pushed: usize,
+    pulled: usize,
+    cursor: String,
+    message: Option<String>,
+}
+
+/// Push the outbound queue, pull deltas since the cursor, merge, advance the
+/// cursor. Registers the device on first run. Skips quietly when offline, when
+/// no sync token is set, or when another sync is already running. Network
+/// failures are reported as `ok: false`, never as a hard error, so the UI can
+/// show "offline" and retry later.
+async fn do_sync(
+    pool: &SqlitePool,
+    sync_guard: &Mutex<()>,
+    reachable: bool,
+) -> SyncSummary {
+    let off = |message: &str, cursor: String| SyncSummary {
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        cursor,
+        message: Some(message.to_string()),
+    };
+
+    let _g = match sync_guard.try_lock() {
+        Ok(g) => g,
+        Err(_) => return off("sync already in progress", String::new()),
+    };
+
+    let state = match store::get_sync_state(pool).await {
+        Ok(s) => s,
+        Err(e) => return off(&e.to_string(), String::new()),
+    };
+    if !reachable {
+        return off("offline", state.cursor);
+    }
+    let settings = match load_settings(pool).await {
+        Ok(s) => s,
+        Err(e) => return off(&e.to_string(), state.cursor),
+    };
+    let token = match secrets::get_sync_token() {
+        Ok(t) => t,
+        Err(_) => return off("no sync token set", state.cursor),
+    };
+
+    // 1. Register on first run.
+    let (device_user, registered_now) = if state.device_id.is_empty() {
+        match sync::register_device(&settings.sync_endpoint, &token, &settings.device_name, None)
+            .await
+        {
+            Ok(reg) => {
+                if let Err(e) = store::set_sync_identity(pool, &reg.device_id, &reg.user_id).await {
+                    return off(&e.to_string(), state.cursor);
+                }
+                (reg.user_id, true)
+            }
+            Err(e) => return off(&e.to_string(), state.cursor),
+        }
+    } else {
+        (state.user_id.clone(), false)
+    };
+    let _ = registered_now;
+
+    // 2. Push the outbound queue. Marking rows pushed is not transactional with
+    // the network push, so a crash mid-flush can re-send some rows next cycle.
+    // That is safe: the sync service push is idempotent (messages are insert-only,
+    // conversations/memories are last-write-wins by updated_at) per API-CONTRACT.md §3.3.
+    let conv = match store::get_pending_conversations(pool, &device_user).await {
+        Ok(c) => c,
+        Err(e) => return off(&e.to_string(), state.cursor),
+    };
+    let msgs = match store::get_pending_messages(pool).await {
+        Ok(m) => m,
+        Err(e) => return off(&e.to_string(), state.cursor),
+    };
+    let pushed = conv.len() + msgs.len();
+    if pushed > 0 {
+        let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
+        if let Err(e) =
+            sync::push(&settings.sync_endpoint, &token, conv.clone(), msgs.clone()).await
+        {
+            return off(&e.to_string(), state.cursor);
+        }
+        if let Err(e) = store::mark_conversations_pushed(pool, &conv).await {
+            return off(&e.to_string(), state.cursor);
+        }
+        if let Err(e) = store::mark_messages_pushed(pool, &msg_ids).await {
+            return off(&e.to_string(), state.cursor);
+        }
+    }
+
+    // 3. Pull deltas and merge (conversations before messages for FK order).
+    let pull = match sync::pull(&settings.sync_endpoint, &token, &state.cursor, &device_user).await
+    {
+        Ok(p) => p,
+        Err(e) => return off(&e.to_string(), state.cursor),
+    };
+    let pulled = pull.conversations.len() + pull.messages.len() + pull.memories.len();
+    for c in &pull.conversations {
+        if let Err(e) = store::upsert_pulled_conversation(pool, c).await {
+            return off(&e.to_string(), state.cursor);
+        }
+    }
+    for m in &pull.messages {
+        if let Err(e) = store::insert_pulled_message(pool, m).await {
+            return off(&e.to_string(), state.cursor);
+        }
+    }
+    for mem in &pull.memories {
+        if let Err(e) = store::upsert_pulled_memory(pool, mem).await {
+            return off(&e.to_string(), state.cursor);
+        }
+    }
+    if let Err(e) = store::set_sync_cursor(pool, &pull.cursor).await {
+        return off(&e.to_string(), pull.cursor);
+    }
+
+    SyncSummary {
+        ok: true,
+        pushed,
+        pulled,
+        cursor: pull.cursor,
+        message: None,
+    }
+}
+
+#[tauri::command]
+async fn sync_now(state: State<'_, AppState>) -> Result<SyncSummary> {
+    let settings = load_settings(&state.pool).await?;
+    let reachable = firefly_reachable(&state, &settings.firefly_endpoint).await;
+    Ok(do_sync(&state.pool, &state.sync_guard, reachable).await)
 }
 
 /// Persist the user message, resolve the tier/route, stream the assistant reply
@@ -223,7 +380,8 @@ async fn send_message(
     task: TaskHint,
     on_token: Channel<StreamEvent>,
 ) -> Result<String> {
-    store::insert_message(&state.pool, &conversation_id, "user", &content).await?;
+    let local_only = matches!(task, TaskHint::Private);
+    store::insert_message(&state.pool, &conversation_id, "user", &content, !local_only, local_only).await?;
 
     let history = store::get_messages(&state.pool, &conversation_id).await?;
     let messages: Vec<ChatMsg> = history
@@ -265,7 +423,8 @@ async fn send_message(
         })
         .ok();
 
-    let assistant = store::insert_message(&state.pool, &conversation_id, "assistant", "").await?;
+    let assistant =
+        store::insert_message(&state.pool, &conversation_id, "assistant", "", false, local_only).await?;
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
 
     let full = llm::stream_chat(
@@ -290,9 +449,26 @@ pub fn run() {
             let handle = app.handle().clone();
             tauri::async_runtime::block_on(async move {
                 let pool = store::init_pool(&db_path).await.expect("init sqlite pool");
+                let sync_guard = Arc::new(Mutex::new(()));
+
+                // Background sync loop: every 30s, push/pull when Firefly is reachable.
+                let bg_pool = pool.clone();
+                let bg_guard = sync_guard.clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                        let reachable = match load_settings(&bg_pool).await {
+                            Ok(s) => router::check_reachable(&s.firefly_endpoint).await,
+                            Err(_) => false,
+                        };
+                        let _ = do_sync(&bg_pool, &bg_guard, reachable).await;
+                    }
+                });
+
                 handle.manage(AppState {
                     pool,
                     reachability: Mutex::new(ReachabilityCache::default()),
+                    sync_guard,
                 });
             });
             Ok(())
@@ -303,12 +479,15 @@ pub fn run() {
             create_conversation,
             set_token,
             has_token,
+            set_sync_token,
+            has_sync_token,
             get_settings,
             set_settings,
             send_message,
             check_firefly,
             check_on_device,
             pull_on_device_model,
+            sync_now,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -33,6 +33,8 @@ export interface Settings {
   modelCode: string;
   modelChatHeavy: string;
   modelFrontier: string;
+  syncEndpoint: string;
+  deviceName: string;
 }
 
 export type StreamEvent =
@@ -55,6 +57,21 @@ export const createConversation = (title: string) =>
 export const setToken = (token: string) => invoke<void>("set_token", { token });
 
 export const hasToken = () => invoke<boolean>("has_token");
+
+export const setSyncToken = (token: string) =>
+  invoke<void>("set_sync_token", { token });
+
+export const hasSyncToken = () => invoke<boolean>("has_sync_token");
+
+export interface SyncStatus {
+  ok: boolean;
+  pushed: number;
+  pulled: number;
+  cursor: string;
+  message?: string | null;
+}
+
+export const syncNow = () => invoke<SyncStatus>("sync_now");
 
 export const getSettings = () => invoke<Settings>("get_settings");
 

@@ -9,7 +9,10 @@
   // `reasoning` is ephemeral; tier/servedModel/degraded drive the badge.
   type ChatMessage = Message & { reasoning?: string; degraded?: boolean };
 
-  let { conversationId }: { conversationId: string | null } = $props();
+  let {
+    conversationId,
+    refreshSignal = 0,
+  }: { conversationId: string | null; refreshSignal?: number } = $props();
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
@@ -19,12 +22,14 @@
 
   $effect(() => {
     const id = conversationId;
-    messages = [];
+    refreshSignal; // re-run when a sync pulls new rows
     error = null;
     if (id) {
       getMessages(id).then((m) => {
         if (conversationId === id) messages = m;
       });
+    } else {
+      messages = [];
     }
   });
 
