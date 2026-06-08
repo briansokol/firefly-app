@@ -1,5 +1,6 @@
 mod error;
 mod llm;
+mod memory;
 mod router;
 mod secrets;
 mod store;
