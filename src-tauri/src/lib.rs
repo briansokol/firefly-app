@@ -1,5 +1,6 @@
 mod error;
 mod llm;
+mod memory;
 mod router;
 mod secrets;
 mod store;
@@ -25,6 +26,7 @@ const DEFAULT_MODEL_CHAT_HEAVY: &str = "chat-heavy";
 const DEFAULT_MODEL_FRONTIER: &str = "frontier";
 const DEFAULT_SYNC_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:8788";
 const DEFAULT_DEVICE_NAME: &str = "firefly-device";
+const DEFAULT_MEMORY_ENABLED: &str = "true";
 const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Default)]
@@ -50,6 +52,7 @@ struct Settings {
     model_frontier: String,
     sync_endpoint: String,
     device_name: String,
+    memory_enabled: bool,
 }
 
 async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
@@ -70,6 +73,10 @@ async fn load_settings(pool: &SqlitePool) -> Result<Settings> {
         model_frontier: get("model_frontier", DEFAULT_MODEL_FRONTIER).await?,
         sync_endpoint: get("sync_endpoint", DEFAULT_SYNC_ENDPOINT).await?,
         device_name: get("device_name", DEFAULT_DEVICE_NAME).await?,
+        memory_enabled: get("memory_enabled", DEFAULT_MEMORY_ENABLED)
+            .await?
+            .parse()
+            .unwrap_or(true),
     })
 }
 
@@ -228,6 +235,12 @@ async fn set_settings(state: State<'_, AppState>, settings: Settings) -> Result<
     store::set_setting(pool, "model_frontier", &settings.model_frontier).await?;
     store::set_setting(pool, "sync_endpoint", &settings.sync_endpoint).await?;
     store::set_setting(pool, "device_name", &settings.device_name).await?;
+    store::set_setting(
+        pool,
+        "memory_enabled",
+        if settings.memory_enabled { "true" } else { "false" },
+    )
+    .await?;
     Ok(())
 }
 
@@ -384,7 +397,7 @@ async fn send_message(
     store::insert_message(&state.pool, &conversation_id, "user", &content, !local_only, local_only).await?;
 
     let history = store::get_messages(&state.pool, &conversation_id).await?;
-    let messages: Vec<ChatMsg> = history
+    let mut messages: Vec<ChatMsg> = history
         .iter()
         .map(|m| ChatMsg {
             role: m.role.clone(),
@@ -426,6 +439,25 @@ async fn send_message(
     let assistant =
         store::insert_message(&state.pool, &conversation_id, "assistant", "", false, local_only).await?;
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
+
+    if settings.memory_enabled && route.tier == router::Tier::HomeBase {
+        if let Ok(sync_token) = secrets::get_sync_token() {
+            let user_id = store::get_sync_state(&state.pool)
+                .await
+                .map(|s| s.user_id)
+                .unwrap_or_default();
+            match sync::search_memories(&settings.sync_endpoint, &sync_token, &content, &user_id, 8)
+                .await
+            {
+                Ok(mems) => {
+                    if let Some(sys) = memory::build_memory_message(&mems) {
+                        messages.insert(0, sys);
+                    }
+                }
+                Err(e) => eprintln!("memory search failed, sending without context: {e}"),
+            }
+        }
+    }
 
     let full = llm::stream_chat(
         &route.endpoint,

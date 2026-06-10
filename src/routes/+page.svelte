@@ -31,6 +31,7 @@
     modelFrontier: "",
     syncEndpoint: "",
     deviceName: "",
+    memoryEnabled: true,
   });
   let reachable = $state<boolean | null>(null);
   let onDevice = $state<OnDeviceStatus | null>(null);
@@ -110,6 +111,7 @@
       modelFrontier: settings.modelFrontier,
       syncEndpoint: settings.syncEndpoint,
       deviceName: settings.deviceName,
+      memoryEnabled: settings.memoryEnabled,
     });
     saveError = "";
     if (tokenInput.trim()) {
@@ -209,6 +211,10 @@
         </label>
         <label>Home-base model: agentic
           <input bind:value={settings.modelChatHeavy} spellcheck="false" />
+        </label>
+        <label class="toggle">
+          <input type="checkbox" bind:checked={settings.memoryEnabled} />
+          Inject memories on home-base requests
         </label>
         <label>Cloud model: best
           <input bind:value={settings.modelFrontier} spellcheck="false" />

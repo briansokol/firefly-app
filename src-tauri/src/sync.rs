@@ -29,6 +29,12 @@ struct PushBody {
 }
 
 #[derive(Deserialize)]
+struct MemoriesSearchResponse {
+    #[serde(default)]
+    memories: Vec<MemRow>,
+}
+
+#[derive(Deserialize)]
 pub struct PullResponse {
     #[serde(default)]
     pub conversations: Vec<ConvRow>,
@@ -137,6 +143,31 @@ pub async fn pull(
     Ok(body)
 }
 
+fn memories_search_url(base_url: &str, query: &str, user_id: &str, k: u32) -> String {
+    let mut params = vec![format!("q={}", urlencoding(query)), format!("k={k}")];
+    if !user_id.is_empty() {
+        params.push(format!("user={}", urlencoding(user_id)));
+    }
+    format!("{base_url}/memories/search?{}", params.join("&"))
+}
+
+/// GET /memories/search — semantic search over the user's distilled memories,
+/// best-first. See docs/API-CONTRACT.md §3.6. Best-effort at the call site:
+/// callers should treat any error (incl. `501 not configured`) as "no memories".
+pub async fn search_memories(
+    endpoint: &str,
+    token: &str,
+    query: &str,
+    user_id: &str,
+    k: u32,
+) -> Result<Vec<MemRow>> {
+    let url = memories_search_url(&base(endpoint), query, user_id, k);
+    let resp = client()?.get(&url).bearer_auth(token).send().await?;
+    let resp = ensure_ok(resp).await?;
+    let body: MemoriesSearchResponse = resp.json().await?;
+    Ok(body.memories)
+}
+
 /// Minimal percent-encoding for the few query values we send (ISO timestamps,
 /// UUIDs). Encodes everything that isn't an unreserved URL char.
 fn urlencoding(s: &str) -> String {
@@ -156,6 +187,21 @@ fn urlencoding(s: &str) -> String {
 mod tests {
     use super::*;
     use crate::store::{ConvRow, MsgRow};
+
+    #[test]
+    fn memories_url_encodes_query_and_omits_empty_user() {
+        let u = memories_search_url("http://firefly:8788", "what is my dog's name?", "", 8);
+        assert_eq!(
+            u,
+            "http://firefly:8788/memories/search?q=what%20is%20my%20dog%27s%20name%3F&k=8"
+        );
+    }
+
+    #[test]
+    fn memories_url_includes_user_when_present() {
+        let u = memories_search_url("http://firefly:8788", "hi", "user-1", 8);
+        assert_eq!(u, "http://firefly:8788/memories/search?q=hi&k=8&user=user-1");
+    }
 
     #[test]
     fn register_request_is_camel_case() {
