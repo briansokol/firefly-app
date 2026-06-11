@@ -192,6 +192,16 @@ pub async fn list_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<
     Ok(rows)
 }
 
+/// The owning user_id of a conversation, or None if it doesn't exist or is
+/// unowned (a pre-multi-user row with NULL user_id).
+pub async fn conversation_user_id(pool: &SqlitePool, conversation_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT user_id FROM conversations WHERE id = ?")
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| r.get::<Option<String>, _>("user_id")))
+}
+
 pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Vec<Message>> {
     let rows = sqlx::query_as::<_, Message>(
         "SELECT id, conversation_id, role, content, created_at, tier, served_model \
@@ -773,6 +783,14 @@ mod tests {
             .iter().all(|c| c.title.as_deref() != Some("alice chat")));
         assert_eq!(get_pending_messages(&pool, "u1").await.unwrap().len(), 1);
         assert!(get_pending_messages(&pool, "u2").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn conversation_user_id_returns_owner_or_none() {
+        let pool = fresh_pool("firefly_test_owner.db").await;
+        let c = create_conversation(&pool, "alice", "u1").await.unwrap();
+        assert_eq!(conversation_user_id(&pool, &c.id).await.unwrap().as_deref(), Some("u1"));
+        assert_eq!(conversation_user_id(&pool, "missing").await.unwrap(), None);
     }
 
     #[test]

@@ -271,7 +271,13 @@ async fn get_messages(
     state: State<'_, AppState>,
     conversation_id: String,
 ) -> Result<Vec<Message>> {
-    store::get_messages(&state.pool, &conversation_id).await
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    match store::conversation_user_id(&state.pool, &conversation_id).await? {
+        Some(owner) if owner == active => store::get_messages(&state.pool, &conversation_id).await,
+        _ => Err(AppError::Other("conversation not found for this profile".into())),
+    }
 }
 
 #[tauri::command]
@@ -440,6 +446,14 @@ async fn send_message(
     task: TaskHint,
     on_token: Channel<StreamEvent>,
 ) -> Result<String> {
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    match store::conversation_user_id(&state.pool, &conversation_id).await? {
+        Some(owner) if owner == active => {}
+        _ => return Err(AppError::Other("conversation not found for this profile".into())),
+    }
+
     let local_only = matches!(task, TaskHint::Private);
     store::insert_message(&state.pool, &conversation_id, "user", &content, !local_only, local_only).await?;
 
@@ -455,9 +469,6 @@ async fn send_message(
     let settings = load_settings(&state.pool).await?;
     let reachable = firefly_reachable(&state, &settings.firefly_endpoint).await;
 
-    let active = store::get_active_user_id(&state.pool)
-        .await?
-        .ok_or_else(|| AppError::Other("no active profile".into()))?;
     let user = store::get_user(&state.pool, &active)
         .await?
         .ok_or_else(|| AppError::Other("active profile not found".into()))?;
