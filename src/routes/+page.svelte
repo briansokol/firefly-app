@@ -91,7 +91,8 @@
       settings = await getSettings();
       profiles = await listProfiles();
       if (profiles.length > 0) {
-        refreshActiveProfile().then((p) => (profiles = p));
+        // pick up server-side kid->adult upgrades for the active profile
+        profiles = await refreshActiveProfile();
       }
       checkFirefly().then((r) => (reachable = r));
       checkOnDevice().then((r) => (onDevice = r));
@@ -133,7 +134,7 @@
       {#if error}
         <p class="onboard-error">{error}</p>
       {/if}
-      <input placeholder="Display name" bind:value={newProfileName} />
+      <input aria-label="Display name" placeholder="Display name" bind:value={newProfileName} />
       <button
         disabled={registering || !newProfileName.trim()}
         onclick={async () => {
@@ -176,12 +177,20 @@
                 : syncStatus.message ?? "offline"}
         </span>
         <select
+          aria-label="Switch profile"
           value={active?.userId ?? ""}
           onchange={async (e) => {
-            profiles = await switchProfile((e.currentTarget as HTMLSelectElement).value);
-            selectedId = null;
-            await refresh();
-            runSync();
+            const target = e.currentTarget as HTMLSelectElement;
+            try {
+              profiles = await switchProfile(target.value);
+              selectedId = null;
+              await refresh();
+              runSync();
+            } catch (err) {
+              error = String(err);
+              // re-sync the dropdown to the actual active profile
+              profiles = await listProfiles();
+            }
           }}
         >
           {#each profiles as p (p.userId)}
