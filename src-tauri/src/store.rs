@@ -83,13 +83,7 @@ pub struct MemRow {
     pub updated_at: String,
 }
 
-pub struct SyncState {
-    pub device_id: String,
-    pub user_id: String,
-    pub cursor: String,
-}
-
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -145,6 +139,23 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
             .execute(&pool)
             .await?;
         version = 4;
+    }
+
+    if version < 5 {
+        sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS users (\n\
+               user_id      TEXT PRIMARY KEY,\n\
+               device_id    TEXT NOT NULL,\n\
+               display_name TEXT NOT NULL,\n\
+               profile      TEXT NOT NULL DEFAULT 'kid',\n\
+               cursor       TEXT NOT NULL DEFAULT '',\n\
+               created_at   TEXT NOT NULL\n\
+             );\n\
+             DROP TABLE IF EXISTS sync_state;",
+        )
+        .execute(&pool)
+        .await?;
+        version = 5;
     }
 
     // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
@@ -419,34 +430,6 @@ pub async fn upsert_pulled_memory(pool: &SqlitePool, m: &MemRow) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_sync_state(pool: &SqlitePool) -> Result<SyncState> {
-    let r = sqlx::query("SELECT device_id, user_id, cursor FROM sync_state WHERE id = 1")
-        .fetch_one(pool)
-        .await?;
-    Ok(SyncState {
-        device_id: r.get("device_id"),
-        user_id: r.get("user_id"),
-        cursor: r.get("cursor"),
-    })
-}
-
-pub async fn set_sync_identity(pool: &SqlitePool, device_id: &str, user_id: &str) -> Result<()> {
-    sqlx::query("UPDATE sync_state SET device_id = ?, user_id = ? WHERE id = 1")
-        .bind(device_id)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-pub async fn set_sync_cursor(pool: &SqlitePool, cursor: &str) -> Result<()> {
-    sqlx::query("UPDATE sync_state SET cursor = ? WHERE id = 1")
-        .bind(cursor)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,7 +444,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let msg_cols: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
@@ -480,13 +463,6 @@ mod tests {
                 .unwrap();
         assert!(conv_cols.iter().any(|c| c == "user_id"));
         assert!(conv_cols.iter().any(|c| c == "pending_push"));
-
-        // sync_state seeded with exactly one row
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_state")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(n, 1);
 
         // memories table exists
         sqlx::query("SELECT id, user_id, text, source_conversation, updated_at FROM memories")
@@ -637,19 +613,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_state_round_trips() {
-        let pool = fresh_pool("firefly_test_state.db").await;
-        let s0 = get_sync_state(&pool).await.unwrap();
-        assert_eq!(s0.device_id, "");
-        assert_eq!(s0.cursor, "");
+    async fn migration_v5_adds_users_and_drops_sync_state() {
+        let pool = fresh_pool("firefly_test_v5.db").await;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(version, 5);
 
-        set_sync_identity(&pool, "dev-1", "user-1").await.unwrap();
-        set_sync_cursor(&pool, "2026-06-06T14:03:21.118Z").await.unwrap();
+        // users table exists with the expected columns
+        let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('users')")
+            .fetch_all(&pool).await.unwrap();
+        for c in ["user_id", "device_id", "display_name", "profile", "cursor", "created_at"] {
+            assert!(cols.iter().any(|x| x == c), "missing users.{c}");
+        }
 
-        let s1 = get_sync_state(&pool).await.unwrap();
-        assert_eq!(s1.device_id, "dev-1");
-        assert_eq!(s1.user_id, "user-1");
-        assert_eq!(s1.cursor, "2026-06-06T14:03:21.118Z");
+        // sync_state is gone
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_state'",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 0);
     }
 
     #[test]
