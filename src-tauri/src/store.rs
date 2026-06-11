@@ -86,6 +86,9 @@ pub struct MemRow {
 #[derive(Clone, Debug)]
 pub struct User {
     pub user_id: String,
+    /// Server-assigned device id for this user; stored for future
+    /// deregistration/debugging, not yet read.
+    #[allow(dead_code)]
     pub device_id: String,
     pub display_name: String,
     pub profile: String,

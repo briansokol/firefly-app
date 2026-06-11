@@ -240,6 +240,9 @@ async fn register_profile(
 
 #[tauri::command]
 async fn switch_profile(state: State<'_, AppState>, user_id: String) -> Result<Vec<ProfileDto>> {
+    if store::get_user(&state.pool, &user_id).await?.is_none() {
+        return Err(AppError::Other("unknown profile".into()));
+    }
     store::set_active_user_id(&state.pool, &user_id).await?;
     let settings = load_settings(&state.pool).await?;
     refresh_profile(&state.pool, &settings, &user_id).await;
@@ -318,13 +321,13 @@ struct SyncSummary {
 /// Skips quietly when offline or when another sync is already running.
 /// Network failures are reported as `ok: false`, never as a hard error,
 /// so the UI can show "offline" and retry later.
-async fn do_sync(
-    pool: &SqlitePool,
-    sync_guard: &Mutex<()>,
-    reachable: bool,
-) -> SyncSummary {
+async fn do_sync(pool: &SqlitePool, sync_guard: &Mutex<()>, reachable: bool) -> SyncSummary {
     let off = |message: &str| SyncSummary {
-        ok: false, pushed: 0, pulled: 0, cursor: String::new(), message: Some(message.to_string()),
+        ok: false,
+        pushed: 0,
+        pulled: 0,
+        cursor: String::new(),
+        message: Some(message.to_string()),
     };
 
     let _g = match sync_guard.try_lock() {
@@ -348,59 +351,74 @@ async fn do_sync(
 
     let mut pushed = 0usize;
     let mut pulled = 0usize;
-    let mut last_cursor = String::new();
+    let mut errors: Vec<String> = Vec::new();
 
+    // Each user syncs independently with its own device token and cursor; a
+    // failure for one user is logged and does not block the others.
     for u in users {
         let token = match secrets::get_device_token(&u.user_id) {
             Ok(t) => t,
-            Err(_) => continue, // no token for this user; skip
-        };
-
-        // Push this user's pending rows.
-        let conv = match store::get_pending_conversations(pool, &u.user_id).await {
-            Ok(c) => c,
-            Err(e) => return off(&e.to_string()),
-        };
-        let msgs = match store::get_pending_messages(pool, &u.user_id).await {
-            Ok(m) => m,
-            Err(e) => return off(&e.to_string()),
-        };
-        if !conv.is_empty() || !msgs.is_empty() {
-            let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
-            if let Err(e) = sync::push(&settings.sync_endpoint, &token, conv.clone(), msgs.clone()).await {
-                return off(&e.to_string());
+            Err(_) => {
+                eprintln!("sync: no device token for {}, skipping", u.user_id);
+                continue;
             }
-            if let Err(e) = store::mark_conversations_pushed(pool, &conv).await {
-                return off(&e.to_string());
-            }
-            if let Err(e) = store::mark_messages_pushed(pool, &msg_ids).await {
-                return off(&e.to_string());
-            }
-            pushed += conv.len() + msgs.len();
-        }
-
-        // Pull deltas since this user's cursor and merge.
-        let pull = match sync::pull(&settings.sync_endpoint, &token, &u.cursor, &u.user_id).await {
-            Ok(p) => p,
-            Err(e) => return off(&e.to_string()),
         };
-        pulled += pull.conversations.len() + pull.messages.len() + pull.memories.len();
-        for c in &pull.conversations {
-            if let Err(e) = store::upsert_pulled_conversation(pool, c).await { return off(&e.to_string()); }
+        match sync_user(pool, &settings, &token, &u).await {
+            Ok((p, q)) => {
+                pushed += p;
+                pulled += q;
+            }
+            Err(e) => {
+                eprintln!("sync: user {} failed: {e}", u.user_id);
+                errors.push(format!("{}: {e}", u.user_id));
+            }
         }
-        for m in &pull.messages {
-            if let Err(e) = store::insert_pulled_message(pool, m).await { return off(&e.to_string()); }
-        }
-        for mem in &pull.memories {
-            if let Err(e) = store::upsert_pulled_memory(pool, mem).await { return off(&e.to_string()); }
-        }
-        if let Err(e) = store::set_user_cursor(pool, &u.user_id, &pull.cursor).await {
-            return off(&e.to_string());
-        }
-        last_cursor = pull.cursor;
     }
 
-    SyncSummary { ok: true, pushed, pulled, cursor: last_cursor, message: None }
+    if errors.is_empty() {
+        SyncSummary { ok: true, pushed, pulled, cursor: String::new(), message: None }
+    } else {
+        SyncSummary {
+            ok: false,
+            pushed,
+            pulled,
+            cursor: String::new(),
+            message: Some(errors.join("; ")),
+        }
+    }
+}
+
+/// Push one user's pending rows and pull/merge deltas since its cursor. Returns
+/// (pushed_count, pulled_count). An error aborts only this user's sync.
+async fn sync_user(
+    pool: &SqlitePool,
+    settings: &Settings,
+    token: &str,
+    u: &store::User,
+) -> Result<(usize, usize)> {
+    let mut pushed = 0usize;
+    let conv = store::get_pending_conversations(pool, &u.user_id).await?;
+    let msgs = store::get_pending_messages(pool, &u.user_id).await?;
+    if !conv.is_empty() || !msgs.is_empty() {
+        let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
+        sync::push(&settings.sync_endpoint, token, conv.clone(), msgs.clone()).await?;
+        store::mark_conversations_pushed(pool, &conv).await?;
+        store::mark_messages_pushed(pool, &msg_ids).await?;
+        pushed = conv.len() + msgs.len();
+    }
+    let pull = sync::pull(&settings.sync_endpoint, token, &u.cursor, &u.user_id).await?;
+    let pulled = pull.conversations.len() + pull.messages.len() + pull.memories.len();
+    for c in &pull.conversations {
+        store::upsert_pulled_conversation(pool, c).await?;
+    }
+    for m in &pull.messages {
+        store::insert_pulled_message(pool, m).await?;
+    }
+    for mem in &pull.memories {
+        store::upsert_pulled_memory(pool, mem).await?;
+    }
+    store::set_user_cursor(pool, &u.user_id, &pull.cursor).await?;
+    Ok((pushed, pulled))
 }
 
 #[tauri::command]
