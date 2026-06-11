@@ -8,7 +8,7 @@ mod sync;
 
 use error::{AppError, Result};
 use llm::{ChatMsg, StreamEvent};
-use router::{RouteError, RouteInputs, TaskHint};
+use router::{Profile, RouteError, RouteInputs, TaskHint};
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
@@ -178,9 +178,89 @@ async fn pull_on_device_model(
     Ok(())
 }
 
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct ProfileDto {
+    user_id: String,
+    display_name: String,
+    profile: String,
+    active: bool,
+}
+
+/// Re-derive a user's kid/adult profile from the models its LiteLLM key resolves.
+/// Best-effort: leaves the stored profile unchanged if the key or Firefly is
+/// unavailable. `adult` iff the key can resolve `code` or `frontier`.
+async fn refresh_profile(pool: &SqlitePool, settings: &Settings, user_id: &str) {
+    let Ok(key) = secrets::get_litellm_key(user_id) else { return };
+    let endpoint = router::resolve_endpoint(&settings.firefly_endpoint);
+    if let Ok(models) = llm::list_models(&endpoint, &key).await {
+        let adult = models
+            .iter()
+            .any(|m| m == &settings.model_code || m == &settings.model_frontier);
+        let profile = if adult { "adult" } else { "kid" };
+        let _ = store::set_user_profile(pool, user_id, profile).await;
+    }
+}
+
+async fn profiles_dto(pool: &SqlitePool) -> Result<Vec<ProfileDto>> {
+    let active = store::get_active_user_id(pool).await?;
+    let users = store::list_users(pool).await?;
+    Ok(users
+        .into_iter()
+        .map(|u| ProfileDto {
+            active: active.as_deref() == Some(u.user_id.as_str()),
+            user_id: u.user_id,
+            display_name: u.display_name,
+            profile: u.profile,
+        })
+        .collect())
+}
+
+#[tauri::command]
+async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
+    profiles_dto(&state.pool).await
+}
+
+#[tauri::command]
+async fn register_profile(
+    state: State<'_, AppState>,
+    display_name: String,
+) -> Result<Vec<ProfileDto>> {
+    let settings = load_settings(&state.pool).await?;
+    let reg = sync::register_device(&settings.sync_endpoint, &settings.device_name, &display_name)
+        .await
+        .map_err(|e| AppError::Other(e.to_string()))?;
+    secrets::set_device_token(&reg.user_id, &reg.device_token)?;
+    secrets::set_litellm_key(&reg.user_id, &reg.litellm_key)?;
+    store::upsert_user(&state.pool, &reg.user_id, &reg.device_id, &display_name, &reg.profile).await?;
+    store::set_active_user_id(&state.pool, &reg.user_id).await?;
+    refresh_profile(&state.pool, &settings, &reg.user_id).await;
+    profiles_dto(&state.pool).await
+}
+
+#[tauri::command]
+async fn switch_profile(state: State<'_, AppState>, user_id: String) -> Result<Vec<ProfileDto>> {
+    store::set_active_user_id(&state.pool, &user_id).await?;
+    let settings = load_settings(&state.pool).await?;
+    refresh_profile(&state.pool, &settings, &user_id).await;
+    profiles_dto(&state.pool).await
+}
+
+#[tauri::command]
+async fn refresh_active_profile(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
+    if let Some(active) = store::get_active_user_id(&state.pool).await? {
+        let settings = load_settings(&state.pool).await?;
+        refresh_profile(&state.pool, &settings, &active).await;
+    }
+    profiles_dto(&state.pool).await
+}
+
 #[tauri::command]
 async fn list_conversations(state: State<'_, AppState>) -> Result<Vec<Conversation>> {
-    store::list_conversations(&state.pool).await
+    match store::get_active_user_id(&state.pool).await? {
+        Some(uid) => store::list_conversations(&state.pool, &uid).await,
+        None => Ok(Vec::new()),
+    }
 }
 
 #[tauri::command]
@@ -192,31 +272,11 @@ async fn get_messages(
 }
 
 #[tauri::command]
-async fn create_conversation(
-    state: State<'_, AppState>,
-    title: String,
-) -> Result<Conversation> {
-    store::create_conversation(&state.pool, &title).await
-}
-
-#[tauri::command]
-fn set_token(token: String) -> Result<()> {
-    secrets::set_token(&token)
-}
-
-#[tauri::command]
-fn has_token() -> bool {
-    secrets::has_token()
-}
-
-#[tauri::command]
-fn set_sync_token(token: String) -> Result<()> {
-    secrets::set_sync_token(&token)
-}
-
-#[tauri::command]
-fn has_sync_token() -> bool {
-    secrets::has_sync_token()
+async fn create_conversation(state: State<'_, AppState>, title: String) -> Result<Conversation> {
+    let uid = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    store::create_conversation(&state.pool, &title, &uid).await
 }
 
 #[tauri::command]
@@ -254,124 +314,93 @@ struct SyncSummary {
     message: Option<String>,
 }
 
-/// Push the outbound queue, pull deltas since the cursor, merge, advance the
-/// cursor. Registers the device on first run. Skips quietly when offline, when
-/// no sync token is set, or when another sync is already running. Network
-/// failures are reported as `ok: false`, never as a hard error, so the UI can
-/// show "offline" and retry later.
+/// Push the outbound queue and pull deltas for every registered user.
+/// Skips quietly when offline or when another sync is already running.
+/// Network failures are reported as `ok: false`, never as a hard error,
+/// so the UI can show "offline" and retry later.
 async fn do_sync(
     pool: &SqlitePool,
     sync_guard: &Mutex<()>,
     reachable: bool,
 ) -> SyncSummary {
-    let off = |message: &str, cursor: String| SyncSummary {
-        ok: false,
-        pushed: 0,
-        pulled: 0,
-        cursor,
-        message: Some(message.to_string()),
+    let off = |message: &str| SyncSummary {
+        ok: false, pushed: 0, pulled: 0, cursor: String::new(), message: Some(message.to_string()),
     };
 
     let _g = match sync_guard.try_lock() {
         Ok(g) => g,
-        Err(_) => return off("sync already in progress", String::new()),
-    };
-
-    let state = match store::get_sync_state(pool).await {
-        Ok(s) => s,
-        Err(e) => return off(&e.to_string(), String::new()),
+        Err(_) => return off("sync already in progress"),
     };
     if !reachable {
-        return off("offline", state.cursor);
+        return off("offline");
     }
     let settings = match load_settings(pool).await {
         Ok(s) => s,
-        Err(e) => return off(&e.to_string(), state.cursor),
+        Err(e) => return off(&e.to_string()),
     };
-    let token = match secrets::get_sync_token() {
-        Ok(t) => t,
-        Err(_) => return off("no sync token set", state.cursor),
+    let users = match store::list_users(pool).await {
+        Ok(u) => u,
+        Err(e) => return off(&e.to_string()),
     };
+    if users.is_empty() {
+        return off("no profiles");
+    }
 
-    // 1. Register on first run.
-    let (device_user, registered_now) = if state.device_id.is_empty() {
-        match sync::register_device(&settings.sync_endpoint, &token, &settings.device_name, None)
-            .await
-        {
-            Ok(reg) => {
-                if let Err(e) = store::set_sync_identity(pool, &reg.device_id, &reg.user_id).await {
-                    return off(&e.to_string(), state.cursor);
-                }
-                (reg.user_id, true)
+    let mut pushed = 0usize;
+    let mut pulled = 0usize;
+    let mut last_cursor = String::new();
+
+    for u in users {
+        let token = match secrets::get_device_token(&u.user_id) {
+            Ok(t) => t,
+            Err(_) => continue, // no token for this user; skip
+        };
+
+        // Push this user's pending rows.
+        let conv = match store::get_pending_conversations(pool, &u.user_id).await {
+            Ok(c) => c,
+            Err(e) => return off(&e.to_string()),
+        };
+        let msgs = match store::get_pending_messages(pool, &u.user_id).await {
+            Ok(m) => m,
+            Err(e) => return off(&e.to_string()),
+        };
+        if !conv.is_empty() || !msgs.is_empty() {
+            let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
+            if let Err(e) = sync::push(&settings.sync_endpoint, &token, conv.clone(), msgs.clone()).await {
+                return off(&e.to_string());
             }
-            Err(e) => return off(&e.to_string(), state.cursor),
+            if let Err(e) = store::mark_conversations_pushed(pool, &conv).await {
+                return off(&e.to_string());
+            }
+            if let Err(e) = store::mark_messages_pushed(pool, &msg_ids).await {
+                return off(&e.to_string());
+            }
+            pushed += conv.len() + msgs.len();
         }
-    } else {
-        (state.user_id.clone(), false)
-    };
-    let _ = registered_now;
 
-    // 2. Push the outbound queue. Marking rows pushed is not transactional with
-    // the network push, so a crash mid-flush can re-send some rows next cycle.
-    // That is safe: the sync service push is idempotent (messages are insert-only,
-    // conversations/memories are last-write-wins by updated_at) per API-CONTRACT.md §3.3.
-    let conv = match store::get_pending_conversations(pool, &device_user).await {
-        Ok(c) => c,
-        Err(e) => return off(&e.to_string(), state.cursor),
-    };
-    let msgs = match store::get_pending_messages(pool).await {
-        Ok(m) => m,
-        Err(e) => return off(&e.to_string(), state.cursor),
-    };
-    let pushed = conv.len() + msgs.len();
-    if pushed > 0 {
-        let msg_ids: Vec<String> = msgs.iter().map(|m| m.id.clone()).collect();
-        if let Err(e) =
-            sync::push(&settings.sync_endpoint, &token, conv.clone(), msgs.clone()).await
-        {
-            return off(&e.to_string(), state.cursor);
+        // Pull deltas since this user's cursor and merge.
+        let pull = match sync::pull(&settings.sync_endpoint, &token, &u.cursor, &u.user_id).await {
+            Ok(p) => p,
+            Err(e) => return off(&e.to_string()),
+        };
+        pulled += pull.conversations.len() + pull.messages.len() + pull.memories.len();
+        for c in &pull.conversations {
+            if let Err(e) = store::upsert_pulled_conversation(pool, c).await { return off(&e.to_string()); }
         }
-        if let Err(e) = store::mark_conversations_pushed(pool, &conv).await {
-            return off(&e.to_string(), state.cursor);
+        for m in &pull.messages {
+            if let Err(e) = store::insert_pulled_message(pool, m).await { return off(&e.to_string()); }
         }
-        if let Err(e) = store::mark_messages_pushed(pool, &msg_ids).await {
-            return off(&e.to_string(), state.cursor);
+        for mem in &pull.memories {
+            if let Err(e) = store::upsert_pulled_memory(pool, mem).await { return off(&e.to_string()); }
         }
+        if let Err(e) = store::set_user_cursor(pool, &u.user_id, &pull.cursor).await {
+            return off(&e.to_string());
+        }
+        last_cursor = pull.cursor;
     }
 
-    // 3. Pull deltas and merge (conversations before messages for FK order).
-    let pull = match sync::pull(&settings.sync_endpoint, &token, &state.cursor, &device_user).await
-    {
-        Ok(p) => p,
-        Err(e) => return off(&e.to_string(), state.cursor),
-    };
-    let pulled = pull.conversations.len() + pull.messages.len() + pull.memories.len();
-    for c in &pull.conversations {
-        if let Err(e) = store::upsert_pulled_conversation(pool, c).await {
-            return off(&e.to_string(), state.cursor);
-        }
-    }
-    for m in &pull.messages {
-        if let Err(e) = store::insert_pulled_message(pool, m).await {
-            return off(&e.to_string(), state.cursor);
-        }
-    }
-    for mem in &pull.memories {
-        if let Err(e) = store::upsert_pulled_memory(pool, mem).await {
-            return off(&e.to_string(), state.cursor);
-        }
-    }
-    if let Err(e) = store::set_sync_cursor(pool, &pull.cursor).await {
-        return off(&e.to_string(), pull.cursor);
-    }
-
-    SyncSummary {
-        ok: true,
-        pushed,
-        pulled,
-        cursor: pull.cursor,
-        message: None,
-    }
+    SyncSummary { ok: true, pushed, pulled, cursor: last_cursor, message: None }
 }
 
 #[tauri::command]
@@ -383,7 +412,7 @@ async fn sync_now(state: State<'_, AppState>) -> Result<SyncSummary> {
 
 /// Persist the user message, resolve the tier/route, stream the assistant reply
 /// over `on_token`, persist the served tier+model and final text, and return the
-/// assistant message id. The device token never leaves the Rust core, and is only
+/// assistant message id. Secrets never leave the Rust core, and are only
 /// read for home-base/cloud routes.
 #[tauri::command]
 async fn send_message(
@@ -408,6 +437,14 @@ async fn send_message(
     let settings = load_settings(&state.pool).await?;
     let reachable = firefly_reachable(&state, &settings.firefly_endpoint).await;
 
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    let user = store::get_user(&state.pool, &active)
+        .await?
+        .ok_or_else(|| AppError::Other("active profile not found".into()))?;
+    let profile = if user.profile == "adult" { Profile::Adult } else { Profile::Kid };
+
     let inputs = RouteInputs {
         firefly_endpoint: &settings.firefly_endpoint,
         on_device_endpoint: &settings.on_device_endpoint,
@@ -416,13 +453,15 @@ async fn send_message(
         model_chat_heavy: &settings.model_chat_heavy,
         model_frontier: &settings.model_frontier,
         firefly_reachable: reachable,
+        profile,
     };
     let route = router::resolve_route(task, &inputs).map_err(|e| match e {
         RouteError::Refused(m) | RouteError::NotConfigured(m) => AppError::Other(m),
     })?;
 
+    // LiteLLM/home-base/cloud routes carry the user's per-user virtual key.
     let token = if route.use_token {
-        Some(secrets::get_token()?)
+        Some(secrets::get_litellm_key(&active)?)
     } else {
         None
     };
@@ -441,12 +480,8 @@ async fn send_message(
     store::set_message_routing(&state.pool, &assistant.id, route.tier.as_str(), &route.model).await?;
 
     if settings.memory_enabled && route.tier == router::Tier::HomeBase {
-        if let Ok(sync_token) = secrets::get_sync_token() {
-            let user_id = store::get_sync_state(&state.pool)
-                .await
-                .map(|s| s.user_id)
-                .unwrap_or_default();
-            match sync::search_memories(&settings.sync_endpoint, &sync_token, &content, &user_id, 8)
+        if let Ok(device_token) = secrets::get_device_token(&active) {
+            match sync::search_memories(&settings.sync_endpoint, &device_token, &content, &active, 8)
                 .await
             {
                 Ok(mems) => {
@@ -509,10 +544,10 @@ pub fn run() {
             list_conversations,
             get_messages,
             create_conversation,
-            set_token,
-            has_token,
-            set_sync_token,
-            has_sync_token,
+            list_profiles,
+            register_profile,
+            switch_profile,
+            refresh_active_profile,
             get_settings,
             set_settings,
             send_message,
