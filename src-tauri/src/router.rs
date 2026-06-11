@@ -119,6 +119,8 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
                     Ok(home_base(i.model_code))
                 }
             } else {
+                // Offline: a kid degrades to on-device like anyone else — the local
+                // model carries no restricted key, so no refusal is needed here.
                 Ok(on_device(true))
             }
         }
@@ -330,6 +332,18 @@ mod tests {
         i.profile = Profile::Kid;
         i.on_device_endpoint = ""; // forces home-base `code`
         assert!(matches!(resolve_route(TaskHint::CodeComplete, &i), Err(RouteError::Refused(_))));
+    }
+
+    #[test]
+    fn kid_write_degrades_to_on_device_when_offline() {
+        let mut i = inputs(false);
+        i.profile = Profile::Kid;
+        let r = resolve_route(TaskHint::Write, &i).unwrap();
+        assert_eq!(r.tier, Tier::OnDevice);
+        assert!(r.degraded);
+        let r2 = resolve_route(TaskHint::ExplainFile, &i).unwrap();
+        assert_eq!(r2.tier, Tier::OnDevice);
+        assert!(r2.degraded);
     }
 
     #[test]
