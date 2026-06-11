@@ -178,10 +178,12 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>> {
+pub async fn list_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<Conversation>> {
     let rows = sqlx::query_as::<_, Conversation>(
-        "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
+        "SELECT id, title, created_at, updated_at FROM conversations \
+         WHERE user_id = ? ORDER BY updated_at DESC",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
@@ -198,22 +200,20 @@ pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Ve
     Ok(rows)
 }
 
-pub async fn create_conversation(pool: &SqlitePool, title: &str) -> Result<Conversation> {
+pub async fn create_conversation(pool: &SqlitePool, title: &str, user_id: &str) -> Result<Conversation> {
     let id = Uuid::new_v4().to_string();
     let now = now_iso();
-    sqlx::query("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(title)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-    Ok(Conversation {
-        id,
-        title: title.to_string(),
-        created_at: now.clone(),
-        updated_at: now,
-    })
+    sqlx::query(
+        "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(title)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    Ok(Conversation { id, title: title.to_string(), created_at: now.clone(), updated_at: now })
 }
 
 pub async fn insert_message(
@@ -392,15 +392,17 @@ pub async fn set_active_user_id(pool: &SqlitePool, user_id: &str) -> Result<()> 
 
 pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<ConvRow>> {
     let rows = sqlx::query(
-        "SELECT id, title, created_at, updated_at FROM conversations WHERE pending_push = 1",
+        "SELECT id, user_id, title, created_at, updated_at FROM conversations \
+         WHERE pending_push = 1 AND user_id = ?",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(|r| ConvRow {
             id: r.get("id"),
-            user_id: user_id.to_string(),
+            user_id: r.get("user_id"),
             title: Some(r.get::<String, _>("title")),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -408,11 +410,13 @@ pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Resu
         .collect())
 }
 
-pub async fn get_pending_messages(pool: &SqlitePool) -> Result<Vec<MsgRow>> {
+pub async fn get_pending_messages(pool: &SqlitePool, user_id: &str) -> Result<Vec<MsgRow>> {
     let rows = sqlx::query(
-        "SELECT id, conversation_id, role, content, served_model, created_at \
-         FROM messages WHERE pending_push = 1 ORDER BY created_at ASC, id ASC",
+        "SELECT m.id, m.conversation_id, m.role, m.content, m.served_model, m.created_at \
+         FROM messages m JOIN conversations c ON c.id = m.conversation_id \
+         WHERE m.pending_push = 1 AND c.user_id = ? ORDER BY m.created_at ASC, m.id ASC",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -573,11 +577,11 @@ mod tests {
     #[tokio::test]
     async fn pending_then_pushed_clears_queue() {
         let pool = fresh_pool("firefly_test_queue.db").await;
-        let c = create_conversation(&pool, "hi").await.unwrap();
+        let c = create_conversation(&pool, "hi", "user-1").await.unwrap();
         insert_message(&pool, &c.id, "user", "yo", true, false).await.unwrap();
 
         let pc = get_pending_conversations(&pool, "user-1").await.unwrap();
-        let pm = get_pending_messages(&pool).await.unwrap();
+        let pm = get_pending_messages(&pool, "user-1").await.unwrap();
         assert_eq!(pc.len(), 1);
         assert_eq!(pc[0].user_id, "user-1");
         assert_eq!(pm.len(), 1);
@@ -586,13 +590,13 @@ mod tests {
         mark_messages_pushed(&pool, &[pm[0].id.clone()]).await.unwrap();
 
         assert!(get_pending_conversations(&pool, "user-1").await.unwrap().is_empty());
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "user-1").await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn private_message_is_never_queued_for_push() {
         let pool = fresh_pool("firefly_test_private.db").await;
-        let c = create_conversation(&pool, "secret").await.unwrap();
+        let c = create_conversation(&pool, "secret", "u1").await.unwrap();
         // private user message: pending=false, local_only=true
         insert_message(&pool, &c.id, "user", "ssh", false, true).await.unwrap();
         // private assistant placeholder, then finalized via update_message_content
@@ -600,11 +604,11 @@ mod tests {
         update_message_content(&pool, &a.id, "secret reply").await.unwrap();
 
         // neither private message is ever pending for push
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "u1").await.unwrap().is_empty());
 
         // a normal (non-private) message in the same conversation DOES queue
         let n = insert_message(&pool, &c.id, "user", "hi", true, false).await.unwrap();
-        let pm = get_pending_messages(&pool).await.unwrap();
+        let pm = get_pending_messages(&pool, "u1").await.unwrap();
         assert_eq!(pm.len(), 1);
         assert_eq!(pm[0].id, n.id);
     }
@@ -612,7 +616,7 @@ mod tests {
     #[tokio::test]
     async fn mark_conversations_pushed_is_guarded_by_updated_at() {
         let pool = fresh_pool("firefly_test_markguard.db").await;
-        let c = create_conversation(&pool, "t").await.unwrap();
+        let c = create_conversation(&pool, "t", "u").await.unwrap();
         let snapshot = get_pending_conversations(&pool, "u").await.unwrap();
         assert_eq!(snapshot.len(), 1);
 
@@ -665,7 +669,7 @@ mod tests {
         assert_eq!(rows[0].content, "first");
         assert_eq!(rows[0].served_model.as_deref(), Some("chat-heavy"));
         // pulled rows are not re-queued for push
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "u").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -746,6 +750,26 @@ mod tests {
 
         set_active_user_id(&pool, "u2").await.unwrap();
         assert_eq!(get_active_user_id(&pool).await.unwrap().as_deref(), Some("u2"));
+    }
+
+    #[tokio::test]
+    async fn conversations_and_queue_are_user_scoped() {
+        let pool = fresh_pool("firefly_test_scope.db").await;
+        let a = create_conversation(&pool, "alice chat", "u1").await.unwrap();
+        let _b = create_conversation(&pool, "bob chat", "u2").await.unwrap();
+        insert_message(&pool, &a.id, "user", "hi", true, false).await.unwrap();
+
+        // list is scoped by user
+        let alice = list_conversations(&pool, "u1").await.unwrap();
+        assert_eq!(alice.len(), 1);
+        assert_eq!(alice[0].title, "alice chat");
+
+        // pending queue is scoped by user (join through conversations.user_id)
+        assert_eq!(get_pending_conversations(&pool, "u1").await.unwrap().len(), 1);
+        assert!(get_pending_conversations(&pool, "u2").await.unwrap()
+            .iter().all(|c| c.title.as_deref() != Some("alice chat")));
+        assert_eq!(get_pending_messages(&pool, "u1").await.unwrap().len(), 1);
+        assert!(get_pending_messages(&pool, "u2").await.unwrap().is_empty());
     }
 
     #[test]
