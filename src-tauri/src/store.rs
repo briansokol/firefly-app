@@ -83,6 +83,15 @@ pub struct MemRow {
     pub updated_at: String,
 }
 
+#[derive(Clone, Debug)]
+pub struct User {
+    pub user_id: String,
+    pub device_id: String,
+    pub display_name: String,
+    pub profile: String,
+    pub cursor: String,
+}
+
 const SCHEMA_VERSION: i64 = 5;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
@@ -297,6 +306,88 @@ pub async fn set_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<()
     .execute(pool)
     .await?;
     Ok(())
+}
+
+pub async fn upsert_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    device_id: &str,
+    display_name: &str,
+    profile: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO users (user_id, device_id, display_name, profile, cursor, created_at) \
+         VALUES (?, ?, ?, ?, '', ?) \
+         ON CONFLICT(user_id) DO UPDATE SET \
+           device_id = excluded.device_id, \
+           display_name = excluded.display_name, \
+           profile = excluded.profile",
+    )
+    .bind(user_id)
+    .bind(device_id)
+    .bind(display_name)
+    .bind(profile)
+    .bind(now_iso())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+fn user_from_row(r: &sqlx::sqlite::SqliteRow) -> User {
+    User {
+        user_id: r.get("user_id"),
+        device_id: r.get("device_id"),
+        display_name: r.get("display_name"),
+        profile: r.get("profile"),
+        cursor: r.get("cursor"),
+    }
+}
+
+pub async fn list_users(pool: &SqlitePool) -> Result<Vec<User>> {
+    let rows = sqlx::query(
+        "SELECT user_id, device_id, display_name, profile, cursor FROM users ORDER BY created_at ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(user_from_row).collect())
+}
+
+pub async fn get_user(pool: &SqlitePool, user_id: &str) -> Result<Option<User>> {
+    let row = sqlx::query(
+        "SELECT user_id, device_id, display_name, profile, cursor FROM users WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(user_from_row))
+}
+
+pub async fn set_user_profile(pool: &SqlitePool, user_id: &str, profile: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET profile = ? WHERE user_id = ?")
+        .bind(profile)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_user_cursor(pool: &SqlitePool, user_id: &str, cursor: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET cursor = ? WHERE user_id = ?")
+        .bind(cursor)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_active_user_id(pool: &SqlitePool) -> Result<Option<String>> {
+    Ok(get_setting(pool, "active_user_id")
+        .await?
+        .filter(|s| !s.is_empty()))
+}
+
+pub async fn set_active_user_id(pool: &SqlitePool, user_id: &str) -> Result<()> {
+    set_setting(pool, "active_user_id", user_id).await
 }
 
 pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<ConvRow>> {
@@ -631,6 +722,30 @@ mod tests {
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_state'",
         ).fetch_one(&pool).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn users_and_active_user_round_trip() {
+        let pool = fresh_pool("firefly_test_users.db").await;
+        assert!(list_users(&pool).await.unwrap().is_empty());
+        assert!(get_active_user_id(&pool).await.unwrap().is_none());
+
+        upsert_user(&pool, "u1", "d1", "Alice", "kid").await.unwrap();
+        upsert_user(&pool, "u2", "d2", "Bob", "adult").await.unwrap();
+        assert_eq!(list_users(&pool).await.unwrap().len(), 2);
+
+        let u1 = get_user(&pool, "u1").await.unwrap().unwrap();
+        assert_eq!(u1.display_name, "Alice");
+        assert_eq!(u1.profile, "kid");
+
+        set_user_profile(&pool, "u1", "adult").await.unwrap();
+        assert_eq!(get_user(&pool, "u1").await.unwrap().unwrap().profile, "adult");
+
+        set_user_cursor(&pool, "u1", "2026-06-06T00:00:00.000Z").await.unwrap();
+        assert_eq!(get_user(&pool, "u1").await.unwrap().unwrap().cursor, "2026-06-06T00:00:00.000Z");
+
+        set_active_user_id(&pool, "u2").await.unwrap();
+        assert_eq!(get_active_user_id(&pool).await.unwrap().as_deref(), Some("u2"));
     }
 
     #[test]
