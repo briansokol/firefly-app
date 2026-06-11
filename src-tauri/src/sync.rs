@@ -10,8 +10,8 @@ use std::time::Duration;
 #[derive(Serialize)]
 struct RegisterRequest {
     name: String,
-    #[serde(rename = "userId", skip_serializing_if = "Option::is_none")]
-    user_id: Option<String>,
+    #[serde(rename = "displayName")]
+    display_name: String,
 }
 
 #[derive(Deserialize)]
@@ -20,6 +20,11 @@ struct RegisterResponse {
     device_id: String,
     #[serde(rename = "userId")]
     user_id: String,
+    #[serde(rename = "deviceToken")]
+    device_token: String,
+    #[serde(rename = "litellmKey")]
+    litellm_key: String,
+    profile: String,
 }
 
 #[derive(Serialize)]
@@ -48,6 +53,9 @@ pub struct PullResponse {
 pub struct Registration {
     pub device_id: String,
     pub user_id: String,
+    pub device_token: String,
+    pub litellm_key: String,
+    pub profile: String,
 }
 
 fn client() -> Result<reqwest::Client> {
@@ -71,19 +79,19 @@ async fn ensure_ok(resp: reqwest::Response) -> Result<reqwest::Response> {
     }
 }
 
+/// Open self-registration (no token). Always creates a `kid` user server-side.
+/// See API-CONTRACT.md §3.2.
 pub async fn register_device(
     endpoint: &str,
-    token: &str,
     name: &str,
-    user_id: Option<&str>,
+    display_name: &str,
 ) -> Result<Registration> {
     let url = format!("{}/devices/register", base(endpoint));
     let resp = client()?
         .post(&url)
-        .bearer_auth(token)
         .json(&RegisterRequest {
             name: name.to_string(),
-            user_id: user_id.map(|s| s.to_string()),
+            display_name: display_name.to_string(),
         })
         .send()
         .await?;
@@ -92,6 +100,9 @@ pub async fn register_device(
     Ok(Registration {
         device_id: r.device_id,
         user_id: r.user_id,
+        device_token: r.device_token,
+        litellm_key: r.litellm_key,
+        profile: r.profile,
     })
 }
 
@@ -204,23 +215,27 @@ mod tests {
     }
 
     #[test]
-    fn register_request_is_camel_case() {
+    fn register_request_sends_name_and_display_name() {
         let body = serde_json::to_value(RegisterRequest {
             name: "macbook".into(),
-            user_id: None,
+            display_name: "Kiddo".into(),
         })
         .unwrap();
         assert_eq!(body["name"], "macbook");
-        // omitted when None
-        assert!(body.get("userId").is_none());
+        assert_eq!(body["displayName"], "Kiddo");
     }
 
     #[test]
-    fn register_response_reads_camel_case() {
-        let r: RegisterResponse =
-            serde_json::from_str(r#"{"deviceId":"d-1","userId":"u-1"}"#).unwrap();
+    fn register_response_reads_all_fields() {
+        let r: RegisterResponse = serde_json::from_str(
+            r#"{"deviceId":"d-1","userId":"u-1","deviceToken":"dt","litellmKey":"lk","profile":"kid"}"#,
+        )
+        .unwrap();
         assert_eq!(r.device_id, "d-1");
         assert_eq!(r.user_id, "u-1");
+        assert_eq!(r.device_token, "dt");
+        assert_eq!(r.litellm_key, "lk");
+        assert_eq!(r.profile, "kid");
     }
 
     #[test]
