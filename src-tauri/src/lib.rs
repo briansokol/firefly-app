@@ -28,6 +28,7 @@ const DEFAULT_MODEL_FRONTIER: &str = "frontier";
 const DEFAULT_SYNC_ENDPOINT: &str = "http://firefly.taild9c345.ts.net:8788";
 const DEFAULT_DEVICE_NAME: &str = "firefly-device";
 const DEFAULT_MEMORY_ENABLED: &str = "true";
+const DEFAULT_CONVERSATION_TITLE: &str = "New conversation";
 const REACHABILITY_TTL: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[derive(Default)]
@@ -287,6 +288,83 @@ async fn create_conversation(state: State<'_, AppState>, title: String) -> Resul
         .await?
         .ok_or_else(|| AppError::Other("no active profile".into()))?;
     store::create_conversation(&state.pool, &title, &uid).await
+}
+
+#[tauri::command]
+async fn rename_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    title: String,
+) -> Result<Conversation> {
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    match store::conversation_user_id(&state.pool, &conversation_id).await? {
+        Some(owner) if owner == active => {}
+        _ => return Err(AppError::Other("conversation not found for this profile".into())),
+    }
+    let title = title.trim();
+    if title.is_empty() {
+        return Err(AppError::Other("title cannot be empty".into()));
+    }
+    store::update_conversation_title(&state.pool, &conversation_id, title).await
+}
+
+#[tauri::command]
+async fn generate_conversation_title(
+    state: State<'_, AppState>,
+    conversation_id: String,
+    first_message: String,
+) -> Result<Conversation> {
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    match store::conversation_user_id(&state.pool, &conversation_id).await? {
+        Some(owner) if owner == active => {}
+        _ => return Err(AppError::Other("conversation not found for this profile".into())),
+    }
+
+    let conv = store::get_conversation(&state.pool, &conversation_id)
+        .await?
+        .ok_or_else(|| AppError::Other("conversation not found".into()))?;
+    // Only auto-name a freshly created, still-default conversation; never clobber
+    // a title the user (or a prior run) already set.
+    if conv.title != DEFAULT_CONVERSATION_TITLE {
+        return Ok(conv);
+    }
+
+    let settings = load_settings(&state.pool).await?;
+    let reachable = firefly_reachable(&state, &settings.firefly_endpoint).await;
+    let user = store::get_user(&state.pool, &active)
+        .await?
+        .ok_or_else(|| AppError::Other("active profile not found".into()))?;
+    let profile = if user.profile == "adult" { Profile::Adult } else { Profile::Kid };
+
+    let inputs = RouteInputs {
+        firefly_endpoint: &settings.firefly_endpoint,
+        on_device_endpoint: &settings.on_device_endpoint,
+        on_device_model: &settings.on_device_model,
+        model_code: &settings.model_code,
+        model_chat_heavy: &settings.model_chat_heavy,
+        model_frontier: &settings.model_frontier,
+        firefly_reachable: reachable,
+        profile,
+    };
+    // Quick always resolves to an on-device route (router.rs), so no token is used.
+    let route = router::resolve_route(TaskHint::Quick, &inputs).map_err(|e| match e {
+        RouteError::Refused(m) | RouteError::NotConfigured(m) => AppError::Other(m),
+    })?;
+
+    let messages = vec![
+        ChatMsg { role: "system".into(), content: naming::NAMING_SYSTEM_PROMPT.into() },
+        ChatMsg { role: "user".into(), content: first_message },
+    ];
+    let raw = llm::complete_chat(&route.endpoint, None, &route.model, messages).await?;
+
+    match naming::clean_title(&raw) {
+        Some(title) => store::update_conversation_title(&state.pool, &conversation_id, &title).await,
+        None => Ok(conv),
+    }
 }
 
 #[tauri::command]
@@ -574,6 +652,8 @@ pub fn run() {
             list_conversations,
             get_messages,
             create_conversation,
+            rename_conversation,
+            generate_conversation_title,
             list_profiles,
             register_profile,
             switch_profile,
