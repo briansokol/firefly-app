@@ -7,6 +7,7 @@
     onselect,
     onnew,
     onrename,
+    ondelete,
     userName = "",
     syncNote = "",
   }: {
@@ -15,6 +16,7 @@
     onselect: (id: string) => void;
     onnew: () => void;
     onrename: (id: string, title: string) => void;
+    ondelete: (id: string) => void;
     userName?: string;
     syncNote?: string;
   } = $props();
@@ -38,6 +40,23 @@
     if (next && next !== current) onrename(id, next);
     editingId = null;
     editValue = "";
+  }
+
+  let confirmDeleteId = $state<string | null>(null);
+
+  const confirmTitle = $derived(
+    conversations.find((c) => c.id === confirmDeleteId)?.title ?? "",
+  );
+
+  function requestDelete(id: string) {
+    confirmDeleteId = id;
+  }
+  function cancelDelete() {
+    confirmDeleteId = null;
+  }
+  function confirmDelete() {
+    if (confirmDeleteId) ondelete(confirmDeleteId);
+    confirmDeleteId = null;
   }
 </script>
 
@@ -90,6 +109,11 @@
               ><path d="M11.5 2.5l2 2L6 12l-2.5.5L4 10l7.5-7.5z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg
             >
           </button>
+          <button class="icon-mini edit-btn delete-btn" title="Delete" aria-label="Delete conversation" onclick={() => requestDelete(c.id)}>
+            <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"
+              ><path d="M3 4h10M6.5 4V2.5h3V4M5 4l.5 9h5L11 4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" /></svg
+            >
+          </button>
         {/if}
       </div>
     {/each}
@@ -97,6 +121,21 @@
       <div class="empty">No conversations yet</div>
     {/if}
   </nav>
+
+  {#if confirmDeleteId}
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="modal-overlay" role="presentation" onclick={cancelDelete}>
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <div class="ff-card modal-card" role="dialog" aria-modal="true" aria-label="Delete conversation" tabindex="-1" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">Delete conversation?</h2>
+        <p class="modal-name">"{confirmTitle}"</p>
+        <div class="modal-actions">
+          <button class="ff-btn ff-btn--ghost" onclick={cancelDelete}>Cancel</button>
+          <button class="ff-btn ff-btn--danger" onclick={confirmDelete}>Delete</button>
+        </div>
+      </div>
+    </div>
+  {/if}
 
   {#if userName}
     <div class="side-foot">
@@ -208,6 +247,43 @@
   }
   .edit-btn {
     opacity: 0;
+  }
+  .delete-btn:hover {
+    color: var(--ff-red);
+  }
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    display: grid;
+    place-items: center;
+    background: rgba(0, 0, 0, 0.55);
+    backdrop-filter: blur(2px);
+  }
+  .modal-card {
+    width: min(320px, 86vw);
+    display: flex;
+    flex-direction: column;
+    gap: var(--ff-space-4);
+    box-shadow: var(--ff-shadow-pop);
+  }
+  .modal-title {
+    margin: 0;
+    font: 700 17px var(--ff-font-display);
+    color: var(--ff-text-body);
+  }
+  .modal-name {
+    margin: 0;
+    color: var(--ff-text-muted);
+    font-size: var(--ff-text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--ff-space-3);
   }
   .conv:hover .edit-btn,
   .conv:focus-within .edit-btn,
