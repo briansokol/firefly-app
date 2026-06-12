@@ -95,7 +95,7 @@ pub struct User {
     pub cursor: String,
 }
 
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -168,6 +168,13 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
         .execute(&pool)
         .await?;
         version = 5;
+    }
+
+    if version < 6 {
+        sqlx::raw_sql("ALTER TABLE conversations ADD COLUMN deleted_at TEXT;")
+            .execute(&pool)
+            .await?;
+        version = 6;
     }
 
     // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
@@ -784,6 +791,20 @@ mod tests {
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_state'",
         ).fetch_one(&pool).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn migration_v6_adds_deleted_at() {
+        let pool = fresh_pool("firefly_test_v6.db").await;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(version, 6);
+        // column exists and defaults to NULL on insert
+        create_conversation(&pool, "t", "u").await.unwrap();
+        let deleted: Option<String> =
+            sqlx::query_scalar("SELECT deleted_at FROM conversations LIMIT 1")
+                .fetch_one(&pool).await.unwrap();
+        assert!(deleted.is_none());
     }
 
     #[tokio::test]
