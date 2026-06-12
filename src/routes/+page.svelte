@@ -361,6 +361,7 @@
   .app {
     display: flex;
     height: 100vh;
+    overflow: hidden;
     background: var(--ff-surface-app);
   }
   main {
