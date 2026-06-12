@@ -21,6 +21,11 @@ system is vendored in `src/lib/styles/` (tokens + `.ff-*` classes, loaded once v
 `src/routes/+layout.svelte`); fonts are bundled in `static/fonts/`. Always style with the
 `--ff-*` tokens and `.ff-*` classes rather than hardcoded values.
 
+## Workflow
+
+All feature development happens on a feature branch, never directly on `main`. Branch off
+`main` before starting work and open a PR to merge back; keep `main` clean and releasable.
+
 ## Commands
 
 Run frontend/Tauri commands from the repo root; Rust commands from `src-tauri/`.
