@@ -1,0 +1,37 @@
+/* Firefly — typography tokens */
+:root {
+  --ff-font-display: 'Baloo 2', system-ui, sans-serif;   /* headings, buttons, brand, overlines */
+  --ff-font-body: 'Nunito', system-ui, sans-serif;       /* body, labels, messages */
+
+  /* Scale */
+  --ff-text-xs: 11px;     /* overlines, badges (always 800 weight + letterspaced caps) */
+  --ff-text-sm: 12px;     /* helper text, timestamps */
+  --ff-text-base: 14px;   /* default body, controls */
+  --ff-text-md: 15px;     /* chat messages */
+  --ff-text-lg: 18px;     /* section headings (display font) */
+  --ff-text-xl: 24px;     /* page titles (display font) */
+  --ff-text-2xl: 32px;    /* hero / empty states (display font) */
+
+  --ff-leading-tight: 1.2;
+  --ff-leading-body: 1.65;
+
+  --ff-tracking-caps: 0.07em;  /* for uppercase overlines & badges */
+}
+
+/* Base text defaults for any Firefly surface */
+.ff-root {
+  font-family: var(--ff-font-body);
+  font-size: var(--ff-text-base);
+  font-weight: 600;
+  line-height: var(--ff-leading-body);
+  color: var(--ff-text-body);
+  background: var(--ff-surface-app);
+  -webkit-font-smoothing: antialiased;
+}
+.ff-root *, .ff-root *::before, .ff-root *::after { box-sizing: border-box; }
+
+.ff-display { font-family: var(--ff-font-display); font-weight: 600; line-height: var(--ff-leading-tight); }
+.ff-overline {
+  font-family: var(--ff-font-display); font-size: var(--ff-text-xs); font-weight: 600;
+  letter-spacing: var(--ff-tracking-caps); text-transform: uppercase; color: var(--ff-text-dim);
+}

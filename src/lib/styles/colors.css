@@ -1,0 +1,42 @@
+/* Firefly — color tokens ("Velvet Glow", dark only) */
+:root {
+  /* Base palette — surfaces (deep violet-tinted darks) */
+  --ff-bg-0: #131021;   /* app background */
+  --ff-bg-1: #1a1530;   /* panels, sidebars, cards, AI bubbles */
+  --ff-bg-2: #241d40;   /* controls, inputs, chips */
+  --ff-bg-3: #2d2450;   /* active / hover surfaces */
+  --ff-bg-titlebar: #0e0b1a;
+
+  /* Base palette — accents */
+  --ff-violet-500: #8b5cf6;   /* primary accent */
+  --ff-violet-300: #c084fc;   /* accent light / gradient end */
+  --ff-firefly: #ffb86b;      /* the firefly spark — warm amber, used sparingly */
+  --ff-green: #6ee7b7;        /* success / online */
+  --ff-red: #ff8d9a;          /* danger / destructive */
+
+  /* Base palette — text */
+  --ff-text-1: #f0ecfa;   /* primary text */
+  --ff-text-2: #9b93b8;   /* secondary text */
+  --ff-text-3: #736b92;   /* placeholder, hints, disabled */
+
+  /* Base palette — lines */
+  --ff-line-1: rgba(192, 132, 252, 0.12);   /* subtle hairline */
+  --ff-line-2: rgba(192, 132, 252, 0.22);   /* visible border */
+
+  /* Gradient — the signature accent. Use on primary actions + user bubbles. */
+  --ff-grad-accent: linear-gradient(135deg, var(--ff-violet-500), var(--ff-violet-300));
+
+  /* Semantic aliases */
+  --ff-surface-app: var(--ff-bg-0);
+  --ff-surface-panel: var(--ff-bg-1);
+  --ff-surface-control: var(--ff-bg-2);
+  --ff-surface-active: var(--ff-bg-3);
+  --ff-text-body: var(--ff-text-1);
+  --ff-text-muted: var(--ff-text-2);
+  --ff-text-dim: var(--ff-text-3);
+  --ff-accent: var(--ff-violet-500);
+  --ff-accent-light: var(--ff-violet-300);
+  --ff-on-accent: #ffffff;
+  --ff-status-online: var(--ff-green);
+  --ff-status-danger: var(--ff-red);
+}

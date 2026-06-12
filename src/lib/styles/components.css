@@ -1,0 +1,146 @@
+/* Firefly — component classes. Drop-in styles for the app (Tauri webview). */
+
+/* ---------- Buttons ---------- */
+.ff-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  height: var(--ff-control-h); padding: 0 26px; border: none; cursor: pointer;
+  border-radius: var(--ff-radius-pill);
+  font: 600 15px var(--ff-font-display);
+  color: var(--ff-text-body); background: var(--ff-surface-control);
+  transition: filter var(--ff-dur-fast) var(--ff-ease), transform var(--ff-dur-fast) var(--ff-ease), box-shadow var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-btn:hover { filter: brightness(1.12); transform: translateY(-1px); }
+.ff-btn:active { transform: translateY(0) scale(0.98); filter: brightness(0.95); }
+.ff-btn:focus-visible { outline: none; box-shadow: var(--ff-ring-focus); }
+.ff-btn:disabled { opacity: 0.45; pointer-events: none; }
+.ff-btn--primary { background: var(--ff-grad-accent); color: var(--ff-on-accent); box-shadow: var(--ff-glow-accent); }
+.ff-btn--ghost { background: transparent; color: var(--ff-text-muted); }
+.ff-btn--danger { background: rgba(255, 141, 154, 0.10); color: var(--ff-red); }
+.ff-btn--sm { height: var(--ff-control-h-sm); padding: 0 18px; font-size: 13px; }
+.ff-btn--icon { width: var(--ff-control-h-sm); height: var(--ff-control-h-sm); padding: 0; color: var(--ff-text-muted); }
+
+/* ---------- Fields ---------- */
+.ff-field { display: flex; flex-direction: column; gap: 8px; }
+.ff-label { font-size: 13.5px; font-weight: 800; color: var(--ff-text-body); }
+.ff-help { font-size: var(--ff-text-sm); color: var(--ff-text-dim); font-weight: 700; }
+
+/* ---------- Text input ---------- */
+.ff-input {
+  height: var(--ff-control-h); padding: 0 18px; width: 100%;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-surface-control); border: 2px solid transparent;
+  color: var(--ff-text-body); font: 700 14px var(--ff-font-body); outline: none;
+  transition: border-color var(--ff-dur-fast) var(--ff-ease), box-shadow var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-input::placeholder { color: var(--ff-text-dim); }
+.ff-input:hover { border-color: var(--ff-line-1); }
+.ff-input:focus { border-color: var(--ff-accent); box-shadow: var(--ff-ring-focus); }
+.ff-input--error { border-color: var(--ff-red); }
+.ff-input:disabled { opacity: 0.45; }
+
+/* ---------- Select ---------- */
+.ff-select {
+  height: var(--ff-control-h); padding: 0 44px 0 18px; width: 100%;
+  border-radius: var(--ff-radius-pill);
+  background: var(--ff-surface-control)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%239b93b8' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")
+    no-repeat right 18px center;
+  border: 2px solid transparent; color: var(--ff-text-body);
+  font: 700 14px var(--ff-font-body); appearance: none; outline: none; cursor: pointer;
+  transition: border-color var(--ff-dur-fast) var(--ff-ease), box-shadow var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-select:hover { border-color: var(--ff-line-1); }
+.ff-select:focus { border-color: var(--ff-accent); box-shadow: var(--ff-ring-focus); }
+
+/* ---------- Checkbox ---------- */
+.ff-check { display: flex; align-items: center; gap: 12px; cursor: pointer; font-weight: 700; color: var(--ff-text-muted); }
+.ff-check input {
+  appearance: none; margin: 0; width: 24px; height: 24px; flex: none;
+  border-radius: var(--ff-radius-sm); border: 2px solid var(--ff-line-2);
+  background: var(--ff-surface-control); cursor: pointer; display: grid; place-items: center;
+  transition: all var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-check input:checked { border-color: transparent; background: var(--ff-grad-accent); box-shadow: 0 0 12px rgba(168, 108, 252, 0.45); }
+.ff-check input:checked::before {
+  content: ''; width: 12px; height: 7px; border-radius: 1px;
+  border-left: 3px solid #fff; border-bottom: 3px solid #fff;
+  transform: translateY(-1px) rotate(-45deg);
+}
+.ff-check input:focus-visible { outline: none; box-shadow: var(--ff-ring-focus); }
+.ff-check input:checked + span { color: var(--ff-text-body); }
+
+/* ---------- Radio (vertical list, large targets) ---------- */
+.ff-radios { display: flex; flex-direction: column; gap: 10px; }
+.ff-radio { display: flex; align-items: center; gap: 12px; cursor: pointer; font-weight: 700; color: var(--ff-text-muted); min-height: 24px; }
+.ff-radio input {
+  appearance: none; margin: 0; width: 24px; height: 24px; flex: none;
+  border-radius: 50%; border: 2px solid var(--ff-line-2);
+  background: var(--ff-surface-control); cursor: pointer;
+  transition: all var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-radio input:checked {
+  border-color: var(--ff-accent);
+  background: radial-gradient(circle at center, var(--ff-accent-light) 0 5.5px, transparent 6.5px);
+  box-shadow: 0 0 12px rgba(168, 108, 252, 0.45);
+}
+.ff-radio input:focus-visible { outline: none; box-shadow: var(--ff-ring-focus); }
+.ff-radio input:checked + span { color: var(--ff-text-body); }
+
+/* ---------- Chips, badges, status ---------- */
+.ff-chip {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 13px;
+  border-radius: var(--ff-radius-pill); background: var(--ff-surface-control);
+  font-size: 12px; font-weight: 800; color: var(--ff-text-muted);
+}
+.ff-dot-online { width: 7px; height: 7px; border-radius: 50%; background: var(--ff-status-online); box-shadow: var(--ff-glow-online); }
+.ff-badge {
+  display: inline-flex; align-items: center;
+  font-family: var(--ff-font-display); font-size: var(--ff-text-xs); font-weight: 600;
+  letter-spacing: var(--ff-tracking-caps); text-transform: uppercase;
+  padding: 3px 10px; border-radius: var(--ff-radius-pill);
+  color: var(--ff-accent-light); background: rgba(192, 132, 252, 0.13);
+}
+.ff-badge--warm { color: var(--ff-firefly); background: rgba(255, 184, 107, 0.13); }
+
+/* ---------- The firefly spark ---------- */
+.ff-spark { position: relative; display: inline-block; width: 14px; height: 14px; }
+.ff-spark::before {
+  content: ''; position: absolute; inset: 2px; border-radius: 50%;
+  background: var(--ff-firefly); box-shadow: var(--ff-glow-firefly);
+}
+
+/* ---------- Cards ---------- */
+.ff-card { background: var(--ff-surface-panel); border-radius: var(--ff-radius-card); padding: var(--ff-space-6); }
+
+/* ---------- Chat bubbles ---------- */
+.ff-bubble-user {
+  background: var(--ff-grad-accent); color: var(--ff-on-accent);
+  padding: 13px 20px; border-radius: var(--ff-radius-bubble) var(--ff-radius-bubble) 8px var(--ff-radius-bubble);
+  font-weight: 700; line-height: 1.5; font-size: var(--ff-text-md);
+  box-shadow: var(--ff-glow-accent-soft);
+}
+.ff-bubble-ai {
+  background: var(--ff-surface-panel); color: var(--ff-text-body);
+  padding: 15px 20px; border-radius: 8px var(--ff-radius-bubble) var(--ff-radius-bubble) var(--ff-radius-bubble);
+  line-height: var(--ff-leading-body); font-size: var(--ff-text-md);
+  box-shadow: 0 0 0 1px var(--ff-line-1);
+}
+
+/* ---------- Conversation list ---------- */
+.ff-conv {
+  display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+  border-radius: var(--ff-radius-md); color: var(--ff-text-muted);
+  font-weight: 700; cursor: pointer; transition: background var(--ff-dur-fast) var(--ff-ease);
+}
+.ff-conv:hover { background: var(--ff-surface-control); }
+.ff-conv.is-active {
+  background: var(--ff-surface-active); color: var(--ff-text-body);
+  box-shadow: 0 0 0 1.5px var(--ff-line-2), var(--ff-shadow-card);
+}
+
+/* ---------- Avatar ---------- */
+.ff-avatar {
+  width: 32px; height: 32px; border-radius: 50%; flex: none;
+  background: var(--ff-grad-accent); display: grid; place-items: center;
+  font: 600 14px var(--ff-font-display); color: #fff;
+}

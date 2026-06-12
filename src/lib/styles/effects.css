@@ -1,0 +1,22 @@
+/* Firefly — elevation, glow & motion tokens */
+:root {
+  /* Glows — the firefly signature. Primary actions and checked states emit light. */
+  --ff-glow-accent: 0 0 22px rgba(168, 108, 252, 0.40);
+  --ff-glow-accent-soft: 0 6px 24px rgba(168, 108, 252, 0.30);
+  --ff-glow-accent-strong: 0 0 26px rgba(168, 108, 252, 0.55), 0 4px 14px rgba(0, 0, 0, 0.30);
+  --ff-glow-firefly: 0 0 12px 3px rgba(255, 184, 107, 0.60);   /* the amber spark */
+  --ff-glow-online: 0 0 7px rgba(110, 231, 183, 0.70);
+
+  /* Shadows */
+  --ff-shadow-card: 0 4px 16px rgba(0, 0, 0, 0.25);
+  --ff-shadow-pop: 0 12px 40px rgba(0, 0, 0, 0.45);
+
+  /* Focus ring — visible glow ring on focused fields */
+  --ff-ring-focus: 0 0 0 4px rgba(139, 92, 246, 0.18), 0 0 20px rgba(139, 92, 246, 0.15);
+
+  /* Motion — quick, soft, a touch bouncy on playful elements */
+  --ff-ease: cubic-bezier(0.25, 0.6, 0.3, 1);
+  --ff-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ff-dur-fast: 150ms;
+  --ff-dur-med: 250ms;
+}

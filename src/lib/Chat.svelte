@@ -93,31 +93,46 @@
   }
 </script>
 
-<section class="chat">
+<section class="chat-pane">
   {#if !conversationId}
-    <div class="placeholder">Select or create a conversation to begin.</div>
+    <div class="placeholder">
+      <span class="ff-spark"></span>
+      Select or create a conversation to begin.
+    </div>
   {:else}
     <div class="messages">
       {#each messages as m (m.id)}
-        <div class="msg {m.role}">
-          <div class="role">{m.role}</div>
-          {#if m.role === "assistant" && m.tier}
-            <div class="badge" class:degraded={m.degraded}>
-              {m.tier}{m.servedModel ? ` · ${m.servedModel}` : ""}{m.degraded ? " · degraded" : ""}
+        {#if m.role === "user"}
+          <div class="msg-user">
+            <div class="ff-bubble-user">{m.content}</div>
+          </div>
+        {:else}
+          <div class="msg-ai">
+            <div class="ai-avatar"><span></span></div>
+            <div class="ai-body">
+              {#if m.tier}
+                <span class="ff-badge mode" class:ff-badge--warm={m.degraded}>
+                  {m.tier}{m.servedModel ? ` · ${m.servedModel}` : ""}{m.degraded
+                    ? " · degraded"
+                    : ""}
+                </span>
+              {/if}
+              {#if m.reasoning}
+                <details class="thinking">
+                  <summary>Thinking</summary>
+                  <div class="thinking-body">{m.reasoning}</div>
+                </details>
+              {/if}
+              {#if m.content}
+                <div class="ff-bubble-ai">{m.content}</div>
+              {:else}
+                <div class="ff-bubble-ai">
+                  <span class="typing"><i></i><i></i><i></i></span>
+                </div>
+              {/if}
             </div>
-          {/if}
-          {#if m.reasoning}
-            <details class="thinking">
-              <summary>thinking</summary>
-              <div class="thinking-body">{m.reasoning}</div>
-            </details>
-          {/if}
-          {#if m.content}
-            <div class="bubble">{m.content}</div>
-          {:else if m.role === "assistant" && m.reasoning}
-            <div class="bubble pending">…</div>
-          {/if}
-        </div>
+          </div>
+        {/if}
       {/each}
     </div>
 
@@ -125,38 +140,50 @@
       <div class="error">{error}</div>
     {/if}
 
-    <form class="composer" onsubmit={submit}>
-      <select bind:value={task} class="task" title="Task tier">
-        <option value="agentic">agentic</option>
-        <option value="quick">quick</option>
-        <option value="private">private (on-device)</option>
-        {#if !isKid}
-          <option value="write">write</option>
-          <option value="explain-file">explain-file</option>
-          <option value="code-complete">code-complete</option>
-          <option value="best">best (cloud)</option>
-        {/if}
-      </select>
-      <textarea
-        placeholder="Message Firefly…"
-        bind:value={draft}
-        rows="2"
-        onkeydown={(e) => {
-          if (e.key === "Enter" && !e.shiftKey) {
-            e.preventDefault();
-            submit(e);
-          }
-        }}
-      ></textarea>
-      <button type="submit" disabled={sending || !draft.trim()}>
-        {sending ? "…" : "Send"}
-      </button>
-    </form>
+    <footer class="composer">
+      <form class="pillbar" onsubmit={submit}>
+        <select bind:value={task} class="model" title="Task tier" aria-label="Task tier">
+          <option value="agentic">Agentic</option>
+          <option value="quick">Quick</option>
+          <option value="private">Private (on-device)</option>
+          {#if !isKid}
+            <option value="write">Write</option>
+            <option value="explain-file">Explain file</option>
+            <option value="code-complete">Code complete</option>
+            <option value="best">Best (cloud)</option>
+          {/if}
+        </select>
+        <textarea
+          class="msg-input"
+          placeholder="Message Firefly…"
+          bind:value={draft}
+          rows="1"
+          onkeydown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submit(e);
+            }
+          }}
+        ></textarea>
+        <button class="send" type="submit" disabled={sending || !draft.trim()} title="Send">
+          {#if sending}
+            <span class="send-dots"><i></i><i></i><i></i></span>
+          {:else}
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" aria-hidden="true"
+              ><path
+                d="M2.2 8.4L15 2.5a.5.5 0 01.66.66L9.8 16a.5.5 0 01-.93.02L7 11.2a1 1 0 00-.5-.5L2.18 9.33a.5.5 0 01.02-.93z"
+                fill="#fff"
+              /></svg
+            >
+          {/if}
+        </button>
+      </form>
+    </footer>
   {/if}
 </section>
 
 <style>
-  .chat {
+  .chat-pane {
     flex: 1;
     display: flex;
     flex-direction: column;
@@ -164,122 +191,227 @@
   }
   .placeholder {
     margin: auto;
-    color: var(--muted);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--ff-text-muted);
+    font-weight: 700;
   }
+
   .messages {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    padding: 1rem 1.25rem;
+    padding: 24px 32px;
     display: flex;
     flex-direction: column;
-    gap: 0.9rem;
+    gap: 22px;
+    background:
+      radial-gradient(800px 400px at 30% 110%, rgba(139, 92, 246, 0.1), transparent 60%),
+      var(--ff-surface-app);
   }
-  .msg {
-    max-width: 80%;
-  }
-  .msg.user {
+
+  .msg-user {
     align-self: flex-end;
-    text-align: right;
+    max-width: 62%;
   }
-  .role {
-    font-size: 0.7rem;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--muted);
-    margin-bottom: 0.2rem;
-  }
-  .bubble {
-    display: inline-block;
-    padding: 0.6rem 0.8rem;
-    border-radius: 12px;
-    background: var(--panel);
-    border: 1px solid var(--border);
+  .ff-bubble-user {
     white-space: pre-wrap;
-    text-align: left;
     word-break: break-word;
   }
-  .msg.user .bubble {
-    background: var(--accent);
-    color: white;
-    border-color: var(--accent);
+
+  .msg-ai {
+    align-self: flex-start;
+    max-width: 74%;
+    display: flex;
+    gap: 12px;
   }
-  .bubble.pending {
-    color: var(--muted);
+  .ai-avatar {
+    flex: none;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: var(--ff-surface-control);
+    display: grid;
+    place-items: center;
+    margin-top: 2px;
+    box-shadow: 0 0 0 1.5px var(--ff-line-2);
   }
-  .badge {
-    display: inline-block;
-    font-size: 0.65rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--muted);
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 0.05rem 0.5rem;
-    margin-bottom: 0.3rem;
+  .ai-avatar span {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ff-firefly);
+    box-shadow: var(--ff-glow-firefly);
   }
-  .badge.degraded {
-    color: #ffd7a8;
-    border-color: #7a5a2a;
+  .ai-body {
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    min-width: 0;
   }
-  .task {
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--panel);
-    color: var(--text);
-    padding: 0 0.4rem;
-    font-family: inherit;
+  .mode {
+    align-self: flex-start;
   }
+  .ff-bubble-ai {
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .typing {
+    display: inline-flex;
+    gap: 5px;
+  }
+  .typing i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ff-text-dim);
+    animation: blink 1.2s infinite;
+  }
+  .typing i:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .typing i:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+  @keyframes blink {
+    0%,
+    60%,
+    100% {
+      opacity: 0.3;
+    }
+    30% {
+      opacity: 1;
+    }
+  }
+
   .thinking {
-    margin-bottom: 0.35rem;
-    font-size: 0.8rem;
-    color: var(--muted);
+    font-size: var(--ff-text-sm);
+    color: var(--ff-text-muted);
+    font-weight: 700;
   }
   .thinking summary {
     cursor: pointer;
+    color: var(--ff-text-dim);
   }
   .thinking-body {
-    margin-top: 0.3rem;
-    padding: 0.5rem 0.7rem;
-    border-left: 2px solid var(--border);
+    margin-top: 6px;
+    padding: 8px 12px;
+    border-left: 2px solid var(--ff-line-2);
     white-space: pre-wrap;
-    color: var(--muted);
+    color: var(--ff-text-muted);
   }
+
   .error {
-    margin: 0 1.25rem;
-    padding: 0.6rem 0.8rem;
-    border-radius: 8px;
-    background: #5b1d1d;
-    color: #ffd7d7;
-    font-size: 0.85rem;
+    margin: 0 22px;
+    padding: 12px 16px;
+    border-radius: var(--ff-radius-md);
+    background: rgba(255, 141, 154, 0.1);
+    color: var(--ff-red);
+    font-size: var(--ff-text-base);
+    font-weight: 700;
   }
+
   .composer {
     display: flex;
-    gap: 0.5rem;
-    padding: 0.75rem 1rem 1rem;
-    border-top: 1px solid var(--border);
+    align-items: flex-end;
+    padding: 16px 22px 22px;
+    flex: none;
   }
-  textarea {
+  .pillbar {
     flex: 1;
-    resize: none;
-    padding: 0.6rem;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: var(--panel);
-    color: var(--text);
-    font-family: inherit;
-    font-size: 0.95rem;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 56px;
+    padding: 6px 6px 6px 9px;
+    border-radius: 28px;
+    background: var(--ff-surface-panel);
+    box-shadow: 0 0 0 1.5px var(--ff-line-1);
+    transition: box-shadow var(--ff-dur-fast) var(--ff-ease);
   }
-  .composer button {
-    padding: 0 1.1rem;
-    border-radius: 8px;
+  .pillbar:focus-within {
+    box-shadow:
+      0 0 0 2px var(--ff-accent),
+      var(--ff-glow-accent);
+  }
+  .model {
+    flex: none;
+    height: 44px;
+    padding: 0 38px 0 16px;
+    border-radius: 22px;
     border: none;
-    background: var(--accent);
-    color: white;
-    font-weight: 600;
+    background: var(--ff-surface-control)
+      url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1.5l5 5 5-5' stroke='%239b93b8' stroke-width='2.2' fill='none' stroke-linecap='round'/%3E%3C/svg%3E")
+      no-repeat right 14px center;
+    font: 600 13px var(--ff-font-display);
+    color: var(--ff-text-muted);
     cursor: pointer;
+    appearance: none;
+    outline: none;
   }
-  .composer button:disabled {
+  .model:focus-visible {
+    box-shadow: var(--ff-ring-focus);
+  }
+  .msg-input {
+    flex: 1;
+    align-self: center;
+    background: transparent;
+    border: none;
+    outline: none;
+    resize: none;
+    color: var(--ff-text-body);
+    font: 700 14.5px var(--ff-font-body);
+    line-height: 1.45;
+    padding: 0 8px;
+    max-height: 120px;
+  }
+  .msg-input::placeholder {
+    color: var(--ff-text-dim);
+  }
+  .send {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--ff-grad-accent);
+    border: none;
+    cursor: pointer;
+    box-shadow: var(--ff-glow-accent-strong);
+    transition:
+      transform var(--ff-dur-fast) var(--ff-ease-bounce),
+      filter var(--ff-dur-fast) var(--ff-ease);
+  }
+  .send:hover:not(:disabled) {
+    transform: scale(1.06);
+    filter: brightness(1.08);
+  }
+  .send:active:not(:disabled) {
+    transform: scale(0.95);
+  }
+  .send:disabled {
     opacity: 0.5;
     cursor: default;
+    box-shadow: none;
+  }
+  .send-dots {
+    display: inline-flex;
+    gap: 3px;
+  }
+  .send-dots i {
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: #fff;
+    animation: blink 1.2s infinite;
+  }
+  .send-dots i:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+  .send-dots i:nth-child(3) {
+    animation-delay: 0.4s;
   }
 </style>

@@ -1,0 +1,24 @@
+/* Firefly — spacing & radius tokens */
+:root {
+  /* Spacing scale (4px base) */
+  --ff-space-1: 4px;
+  --ff-space-2: 8px;
+  --ff-space-3: 12px;
+  --ff-space-4: 16px;
+  --ff-space-5: 20px;
+  --ff-space-6: 24px;
+  --ff-space-7: 32px;
+  --ff-space-8: 40px;
+
+  /* Radii — Firefly is soft and round. Controls are full pills; cards are very rounded. */
+  --ff-radius-sm: 9px;      /* checkboxes, tiny chips */
+  --ff-radius-md: 16px;     /* list items, small cards */
+  --ff-radius-card: 24px;   /* cards, panels, sections */
+  --ff-radius-pill: 999px;  /* buttons, inputs, selects, chips — the default control shape */
+  --ff-radius-bubble: 22px; /* chat bubbles (with one 8px "tail" corner) */
+
+  /* Control sizing — spacious, touch-friendly */
+  --ff-control-h: 48px;     /* inputs, selects, buttons */
+  --ff-control-h-sm: 38px;  /* compact icon buttons, header controls */
+  --ff-tap-min: 44px;       /* never make a hit target smaller than this */
+}
