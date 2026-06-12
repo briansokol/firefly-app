@@ -58,6 +58,9 @@ export const createConversation = (title: string) =>
 export const renameConversation = (conversationId: string, title: string) =>
   invoke<Conversation>("rename_conversation", { conversationId, title });
 
+export const deleteConversation = (conversationId: string) =>
+  invoke<void>("delete_conversation", { conversationId });
+
 export const generateConversationTitle = (conversationId: string, firstMessage: string) =>
   invoke<Conversation>("generate_conversation_title", { conversationId, firstMessage });
 
