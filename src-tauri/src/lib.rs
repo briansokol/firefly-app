@@ -311,6 +311,21 @@ async fn rename_conversation(
 }
 
 #[tauri::command]
+async fn delete_conversation(
+    state: State<'_, AppState>,
+    conversation_id: String,
+) -> Result<()> {
+    let active = store::get_active_user_id(&state.pool)
+        .await?
+        .ok_or_else(|| AppError::Other("no active profile".into()))?;
+    match store::conversation_user_id(&state.pool, &conversation_id).await? {
+        Some(owner) if owner == active => {}
+        _ => return Err(AppError::Other("conversation not found for this profile".into())),
+    }
+    store::soft_delete_conversation(&state.pool, &conversation_id).await
+}
+
+#[tauri::command]
 async fn generate_conversation_title(
     state: State<'_, AppState>,
     conversation_id: String,
@@ -653,6 +668,7 @@ pub fn run() {
             get_messages,
             create_conversation,
             rename_conversation,
+            delete_conversation,
             generate_conversation_title,
             list_profiles,
             register_profile,
