@@ -94,6 +94,11 @@ async fn firefly_reachable(state: &AppState, endpoint: &str) -> bool {
 }
 
 #[tauri::command]
+fn platform() -> String {
+    std::env::consts::OS.to_string()
+}
+
+#[tauri::command]
 async fn check_firefly(state: State<'_, AppState>) -> Result<bool> {
     let settings = load_settings(&state.pool).await?;
     Ok(firefly_reachable(&state, &settings.firefly_endpoint).await)
@@ -363,12 +368,14 @@ async fn generate_conversation_title(
         model_chat_heavy: &settings.model_chat_heavy,
         model_frontier: &settings.model_frontier,
         firefly_reachable: reachable,
+        on_device_available: !cfg!(target_os = "ios"),
         profile,
     };
-    // Quick always resolves to an on-device route (router.rs), so no token is used.
-    let route = router::resolve_route(TaskHint::Quick, &inputs).map_err(|e| match e {
-        RouteError::Refused(m) | RouteError::NotConfigured(m) => AppError::Other(m),
-    })?;
+    // Quick resolves on-device on desktop; on iOS it has no target, so naming is best-effort.
+    let route = match router::resolve_route(TaskHint::Quick, &inputs) {
+        Ok(r) => r,
+        Err(_) => return Ok(conv),
+    };
 
     let messages = vec![
         ChatMsg { role: "system".into(), content: naming::NAMING_SYSTEM_PROMPT.into() },
@@ -576,6 +583,7 @@ async fn send_message(
         model_chat_heavy: &settings.model_chat_heavy,
         model_frontier: &settings.model_frontier,
         firefly_reachable: reachable,
+        on_device_available: !cfg!(target_os = "ios"),
         profile,
     };
     let route = router::resolve_route(task, &inputs).map_err(|e| match e {
@@ -681,6 +689,7 @@ pub fn run() {
             check_on_device,
             pull_on_device_model,
             sync_now,
+            platform,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
