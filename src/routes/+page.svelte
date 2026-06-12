@@ -3,6 +3,7 @@
     listConversations,
     createConversation,
     renameConversation,
+    deleteConversation,
     getSettings,
     setSettings,
     syncNow,
@@ -114,6 +115,13 @@
     runSync();
   }
 
+  async function applyDelete(id: string) {
+    if (selectedId === id) selectedId = null;
+    await deleteConversation(id);
+    await refresh();
+    runSync();
+  }
+
   async function saveSettings() {
     await setSettings({
       fireflyEndpoint: settings.fireflyEndpoint,
@@ -186,6 +194,7 @@
       onselect={(id) => (selectedId = id)}
       onnew={newConversation}
       onrename={applyRename}
+  ondelete={applyDelete}
       userName={active?.displayName ?? ""}
       {syncNote}
     />

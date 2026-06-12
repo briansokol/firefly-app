@@ -247,6 +247,7 @@ mod tests {
                 title: Some("t".into()),
                 created_at: "2026-01-01T00:00:00.000Z".into(),
                 updated_at: "2026-01-01T00:00:00.000Z".into(),
+                deleted_at: None,
             }],
             messages: vec![MsgRow {
                 id: "m1".into(),
