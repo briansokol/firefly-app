@@ -62,6 +62,8 @@ pub struct ConvRow {
     pub title: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    #[serde(default)]
+    pub deleted_at: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
@@ -439,7 +441,7 @@ pub async fn set_active_user_id(pool: &SqlitePool, user_id: &str) -> Result<()> 
 
 pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<ConvRow>> {
     let rows = sqlx::query(
-        "SELECT id, user_id, title, created_at, updated_at FROM conversations \
+        "SELECT id, user_id, title, created_at, updated_at, deleted_at FROM conversations \
          WHERE pending_push = 1 AND user_id = ?",
     )
     .bind(user_id)
@@ -453,6 +455,7 @@ pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Resu
             title: Some(r.get::<String, _>("title")),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
+            deleted_at: r.get::<Option<String>, _>("deleted_at"),
         })
         .collect())
 }
@@ -586,7 +589,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         let msg_cols: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
@@ -711,6 +714,7 @@ mod tests {
                 title: Some("t".into()),
                 created_at: "2026-01-01T00:00:00.000Z".into(),
                 updated_at: "2026-01-01T00:00:00.000Z".into(),
+                deleted_at: None,
             },
         )
         .await
@@ -746,6 +750,7 @@ mod tests {
             title: Some("old".into()),
             created_at: "2026-01-01T00:00:00.000Z".into(),
             updated_at: "2026-01-01T00:00:00.000Z".into(),
+            deleted_at: None,
         };
         upsert_pulled_conversation(&pool, &base).await.unwrap();
 
@@ -777,7 +782,7 @@ mod tests {
         let pool = fresh_pool("firefly_test_v5.db").await;
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&pool).await.unwrap();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
 
         // users table exists with the expected columns
         let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('users')")
