@@ -1,0 +1,476 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		1CCF40FAE6D00D8B5F668E01 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D11943090517603F137737DA /* Metal.framework */; };
+		1F3366AF04681ED6EAAF20D3 /* UIKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F6F51A5E2C739799268512EC /* UIKit.framework */; };
+		34D12EE4AEE6998A3BAC88E4 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = BBD12E752EF222C2EEB96120 /* CoreGraphics.framework */; };
+		4939704A5FF70955190626F7 /* WebKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 285DBCD06A8C6A449521388A /* WebKit.framework */; };
+		5715EED7ADAABF9E4E37C8AD /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 8B57019791B9F80C0CDA078B /* QuartzCore.framework */; };
+		685E4A621BA0C456C44D367B /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = 325BBCD1A52DB74D6E0540CF /* main.mm */; };
+		6F9FA3B11B9AEA3BD442417F /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DF9749F0CF91883F0E3A04F /* MetalKit.framework */; };
+		89D4AE3AE4801D7C8A6BEFF8 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CE4717A95ADB2872AC4F8004 /* Assets.xcassets */; };
+		8DC37BAB1A9F46B842D4EC54 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = BE748A3C7AC08B4763E69D07 /* assets */; };
+		D0DB2D1008A9DD4525293434 /* libapp.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 2E14F2AB0D74A7227A5A44CB /* libapp.a */; };
+		DA0A3C85B29100602F0D6F7A /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 927159471FAE23E106F7B9A6 /* LaunchScreen.storyboard */; };
+		E3B77451B138D34AE275972D /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9501866F93F46EFD1397F947 /* Security.framework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		1780CA1E0E5CABC0D49B0E76 /* firefly-app_iOS.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = "firefly-app_iOS.entitlements"; sourceTree = "<group>"; };
+		2329A4AE67DCA1E981664138 /* sync.rs */ = {isa = PBXFileReference; path = sync.rs; sourceTree = "<group>"; };
+		285DBCD06A8C6A449521388A /* WebKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = WebKit.framework; path = System/Library/Frameworks/WebKit.framework; sourceTree = SDKROOT; };
+		2E14F2AB0D74A7227A5A44CB /* libapp.a */ = {isa = PBXFileReference; lastKnownFileType = archive.ar; path = libapp.a; sourceTree = "<group>"; };
+		309CF5B8F4EBCA93FC96F2C2 /* main.rs */ = {isa = PBXFileReference; path = main.rs; sourceTree = "<group>"; };
+		325BBCD1A52DB74D6E0540CF /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
+		49D24A8E92E4087ADDC376CF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		4DF9749F0CF91883F0E3A04F /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		710EA6862511F5F52283954D /* store.rs */ = {isa = PBXFileReference; path = store.rs; sourceTree = "<group>"; };
+		81AB9B586D769753DA32263A /* bindings.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = bindings.h; sourceTree = "<group>"; };
+		8B57019791B9F80C0CDA078B /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		924A316481D45FD08CBFB2E9 /* secrets.rs */ = {isa = PBXFileReference; path = secrets.rs; sourceTree = "<group>"; };
+		927159471FAE23E106F7B9A6 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		9501866F93F46EFD1397F947 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = System/Library/Frameworks/Security.framework; sourceTree = SDKROOT; };
+		9836985A2B1C559F46777941 /* lib.rs */ = {isa = PBXFileReference; path = lib.rs; sourceTree = "<group>"; };
+		99BB495B059432775022F8EC /* firefly-app_iOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = "firefly-app_iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		BBD12E752EF222C2EEB96120 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		BE748A3C7AC08B4763E69D07 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
+		CE4717A95ADB2872AC4F8004 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		D11943090517603F137737DA /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		D506ED3F0E4E72FE14C811DF /* router.rs */ = {isa = PBXFileReference; path = router.rs; sourceTree = "<group>"; };
+		DA3DD76F2430D8B7E007372B /* error.rs */ = {isa = PBXFileReference; path = error.rs; sourceTree = "<group>"; };
+		DB7942CF0DCAD748923D2B44 /* memory.rs */ = {isa = PBXFileReference; path = memory.rs; sourceTree = "<group>"; };
+		F396F2899308231460CA2289 /* naming.rs */ = {isa = PBXFileReference; path = naming.rs; sourceTree = "<group>"; };
+		F6F51A5E2C739799268512EC /* UIKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UIKit.framework; path = System/Library/Frameworks/UIKit.framework; sourceTree = SDKROOT; };
+		FC79F68411271087B5F93E51 /* llm.rs */ = {isa = PBXFileReference; path = llm.rs; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		F64C7163279DC74B4C81AF28 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D0DB2D1008A9DD4525293434 /* libapp.a in Frameworks */,
+				34D12EE4AEE6998A3BAC88E4 /* CoreGraphics.framework in Frameworks */,
+				1CCF40FAE6D00D8B5F668E01 /* Metal.framework in Frameworks */,
+				6F9FA3B11B9AEA3BD442417F /* MetalKit.framework in Frameworks */,
+				5715EED7ADAABF9E4E37C8AD /* QuartzCore.framework in Frameworks */,
+				E3B77451B138D34AE275972D /* Security.framework in Frameworks */,
+				1F3366AF04681ED6EAAF20D3 /* UIKit.framework in Frameworks */,
+				4939704A5FF70955190626F7 /* WebKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		25045F22F854BAD1CB1F5575 /* firefly-app_iOS */ = {
+			isa = PBXGroup;
+			children = (
+				1780CA1E0E5CABC0D49B0E76 /* firefly-app_iOS.entitlements */,
+				49D24A8E92E4087ADDC376CF /* Info.plist */,
+			);
+			path = "firefly-app_iOS";
+			sourceTree = "<group>";
+		};
+		2C83DDB57336CADB47FF5581 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				99BB495B059432775022F8EC /* firefly-app_iOS.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		5C0B214ED315FF0E89FDB073 /* bindings */ = {
+			isa = PBXGroup;
+			children = (
+				81AB9B586D769753DA32263A /* bindings.h */,
+			);
+			path = bindings;
+			sourceTree = "<group>";
+		};
+		7A8CB0205ADD6EE9F06ED205 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				BBD12E752EF222C2EEB96120 /* CoreGraphics.framework */,
+				2E14F2AB0D74A7227A5A44CB /* libapp.a */,
+				D11943090517603F137737DA /* Metal.framework */,
+				4DF9749F0CF91883F0E3A04F /* MetalKit.framework */,
+				8B57019791B9F80C0CDA078B /* QuartzCore.framework */,
+				9501866F93F46EFD1397F947 /* Security.framework */,
+				F6F51A5E2C739799268512EC /* UIKit.framework */,
+				285DBCD06A8C6A449521388A /* WebKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		88542FAD00C88B6F5876E676 = {
+			isa = PBXGroup;
+			children = (
+				BE748A3C7AC08B4763E69D07 /* assets */,
+				CE4717A95ADB2872AC4F8004 /* Assets.xcassets */,
+				927159471FAE23E106F7B9A6 /* LaunchScreen.storyboard */,
+				EABF55AF07FB632F258E3FAE /* Externals */,
+				25045F22F854BAD1CB1F5575 /* firefly-app_iOS */,
+				DC2E62A8E1D764A88855FCE5 /* Sources */,
+				CD12ADC22DE46E9E4A7A1098 /* src */,
+				7A8CB0205ADD6EE9F06ED205 /* Frameworks */,
+				2C83DDB57336CADB47FF5581 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		CD12ADC22DE46E9E4A7A1098 /* src */ = {
+			isa = PBXGroup;
+			children = (
+				DA3DD76F2430D8B7E007372B /* error.rs */,
+				9836985A2B1C559F46777941 /* lib.rs */,
+				FC79F68411271087B5F93E51 /* llm.rs */,
+				309CF5B8F4EBCA93FC96F2C2 /* main.rs */,
+				DB7942CF0DCAD748923D2B44 /* memory.rs */,
+				F396F2899308231460CA2289 /* naming.rs */,
+				D506ED3F0E4E72FE14C811DF /* router.rs */,
+				924A316481D45FD08CBFB2E9 /* secrets.rs */,
+				710EA6862511F5F52283954D /* store.rs */,
+				2329A4AE67DCA1E981664138 /* sync.rs */,
+			);
+			name = src;
+			path = ../../src;
+			sourceTree = "<group>";
+		};
+		DC2E62A8E1D764A88855FCE5 /* Sources */ = {
+			isa = PBXGroup;
+			children = (
+				E1436F97E797ECCE6E4C0BE7 /* firefly-app */,
+			);
+			path = Sources;
+			sourceTree = "<group>";
+		};
+		E1436F97E797ECCE6E4C0BE7 /* firefly-app */ = {
+			isa = PBXGroup;
+			children = (
+				325BBCD1A52DB74D6E0540CF /* main.mm */,
+				5C0B214ED315FF0E89FDB073 /* bindings */,
+			);
+			path = "firefly-app";
+			sourceTree = "<group>";
+		};
+		EABF55AF07FB632F258E3FAE /* Externals */ = {
+			isa = PBXGroup;
+			children = (
+			);
+			path = Externals;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		B4D16A2373FBC7DC51410512 /* firefly-app_iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A47474F421D11A0774803C50 /* Build configuration list for PBXNativeTarget "firefly-app_iOS" */;
+			buildPhases = (
+				26004EF224BF3D04F994D31B /* Build Rust Code */,
+				603252C873A31209B82DB2E7 /* Sources */,
+				C577FDADC81E8E8DD4FA848E /* Resources */,
+				F64C7163279DC74B4C81AF28 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "firefly-app_iOS";
+			packageProductDependencies = (
+			);
+			productName = "firefly-app_iOS";
+			productReference = 99BB495B059432775022F8EC /* firefly-app_iOS.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		C11B6E24681818CCB4D1AD29 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+				};
+			};
+			buildConfigurationList = CAA5E0B30DCDEDE12DD488F5 /* Build configuration list for PBXProject "firefly-app" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 88542FAD00C88B6F5876E676;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 2C83DDB57336CADB47FF5581 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				B4D16A2373FBC7DC51410512 /* firefly-app_iOS */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C577FDADC81E8E8DD4FA848E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				89D4AE3AE4801D7C8A6BEFF8 /* Assets.xcassets in Resources */,
+				DA0A3C85B29100602F0D6F7A /* LaunchScreen.storyboard in Resources */,
+				8DC37BAB1A9F46B842D4EC54 /* assets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		26004EF224BF3D04F994D31B /* Build Rust Code */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Rust Code";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a",
+				"$(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "npm run -- tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths \"${FRAMEWORK_SEARCH_PATHS:?}\" --header-search-paths \"${HEADER_SEARCH_PATHS:?}\" --gcc-preprocessor-definitions \"${GCC_PREPROCESSOR_DEFINITIONS:-}\" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		603252C873A31209B82DB2E7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				685E4A621BA0C456C44D367B /* main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		14540A29E05F062187AB4345 /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "firefly-app_iOS/firefly-app_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "firefly-app_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = net.nsokol.firefly;
+				PRODUCT_NAME = Firefly;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = debug;
+		};
+		7D024ED54CA47784AC20C2CB /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				ARCHS = (
+					arm64,
+				);
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = "firefly-app_iOS/firefly-app_iOS.entitlements";
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				ENABLE_BITCODE = NO;
+				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				INFOPLIST_FILE = "firefly-app_iOS/Info.plist";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				"LIBRARY_SEARCH_PATHS[arch=arm64]" = "$(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				"LIBRARY_SEARCH_PATHS[arch=x86_64]" = "$(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = net.nsokol.firefly;
+				PRODUCT_NAME = Firefly;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VALID_ARCHS = arm64;
+			};
+			name = release;
+		};
+		8AFB3BE0C1B01D1B6FCA3BCE /* debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = debug;
+		};
+		C87A1AAA963D5F9A0DD6EBBB /* release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A47474F421D11A0774803C50 /* Build configuration list for PBXNativeTarget "firefly-app_iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				14540A29E05F062187AB4345 /* debug */,
+				7D024ED54CA47784AC20C2CB /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+		CAA5E0B30DCDEDE12DD488F5 /* Build configuration list for PBXProject "firefly-app" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				8AFB3BE0C1B01D1B6FCA3BCE /* debug */,
+				C87A1AAA963D5F9A0DD6EBBB /* release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = C11B6E24681818CCB4D1AD29 /* Project object */;
+}
