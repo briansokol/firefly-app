@@ -138,6 +138,42 @@ pub async fn stream_chat(
     Ok(accumulated)
 }
 
+/// Non-streaming OpenAI-compatible chat completion. Returns the assistant text.
+/// Used for short, side-channel generations (e.g. conversation titles) where we
+/// do not want to stream tokens to the webview.
+pub async fn complete_chat(
+    endpoint: &str,
+    token: Option<&str>,
+    model: &str,
+    messages: Vec<ChatMsg>,
+) -> Result<String> {
+    let url = format!("{}/v1/chat/completions", endpoint.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": model,
+        "messages": messages,
+        "stream": false,
+    });
+
+    let mut req = reqwest::Client::new().post(&url).json(&body);
+    if let Some(t) = token {
+        req = req.bearer_auth(t);
+    }
+    let resp = req.send().await?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let detail = resp.text().await.unwrap_or_default();
+        return Err(AppError::Other(format!("HTTP {status}: {detail}")));
+    }
+
+    let json: Value = resp.json().await?;
+    let content = json["choices"][0]["message"]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    Ok(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{AppError, Result};
 use chrono::Utc;
 use serde::Serialize;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool};
@@ -227,6 +227,33 @@ pub async fn create_conversation(pool: &SqlitePool, title: &str, user_id: &str) 
     .execute(pool)
     .await?;
     Ok(Conversation { id, title: title.to_string(), created_at: now.clone(), updated_at: now })
+}
+
+pub async fn get_conversation(pool: &SqlitePool, id: &str) -> Result<Option<Conversation>> {
+    let row = sqlx::query_as::<_, Conversation>(
+        "SELECT id, title, created_at, updated_at FROM conversations WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+pub async fn update_conversation_title(
+    pool: &SqlitePool,
+    id: &str,
+    title: &str,
+) -> Result<Conversation> {
+    let now = now_iso();
+    sqlx::query("UPDATE conversations SET title = ?, updated_at = ?, pending_push = 1 WHERE id = ?")
+        .bind(title)
+        .bind(&now)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    get_conversation(pool, id)
+        .await?
+        .ok_or_else(|| AppError::Other("conversation not found".into()))
 }
 
 pub async fn insert_message(
@@ -604,6 +631,24 @@ mod tests {
 
         assert!(get_pending_conversations(&pool, "user-1").await.unwrap().is_empty());
         assert!(get_pending_messages(&pool, "user-1").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn update_conversation_title_changes_title_and_marks_pending() {
+        let pool = fresh_pool("firefly_test_rename.db").await;
+        let c = create_conversation(&pool, "New conversation", "u1").await.unwrap();
+
+        let updated = update_conversation_title(&pool, &c.id, "Tax filing help")
+            .await
+            .unwrap();
+        assert_eq!(updated.title, "Tax filing help");
+
+        let fetched = get_conversation(&pool, &c.id).await.unwrap().unwrap();
+        assert_eq!(fetched.title, "Tax filing help");
+
+        // It must be queued for sync.
+        let pending = get_pending_conversations(&pool, "u1").await.unwrap();
+        assert!(pending.iter().any(|p| p.id == c.id));
     }
 
     #[tokio::test]

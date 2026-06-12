@@ -55,6 +55,12 @@ export const getMessages = (conversationId: string) =>
 export const createConversation = (title: string) =>
   invoke<Conversation>("create_conversation", { title });
 
+export const renameConversation = (conversationId: string, title: string) =>
+  invoke<Conversation>("rename_conversation", { conversationId, title });
+
+export const generateConversationTitle = (conversationId: string, firstMessage: string) =>
+  invoke<Conversation>("generate_conversation_title", { conversationId, firstMessage });
+
 export interface Profile {
   userId: string;
   displayName: string;
