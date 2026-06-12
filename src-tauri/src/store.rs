@@ -83,13 +83,19 @@ pub struct MemRow {
     pub updated_at: String,
 }
 
-pub struct SyncState {
-    pub device_id: String,
+#[derive(Clone, Debug)]
+pub struct User {
     pub user_id: String,
+    /// Server-assigned device id for this user; stored for future
+    /// deregistration/debugging, not yet read.
+    #[allow(dead_code)]
+    pub device_id: String,
+    pub display_name: String,
+    pub profile: String,
     pub cursor: String,
 }
 
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     let opts = SqliteConnectOptions::new()
@@ -147,6 +153,23 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
         version = 4;
     }
 
+    if version < 5 {
+        sqlx::raw_sql(
+            "CREATE TABLE IF NOT EXISTS users (\n\
+               user_id      TEXT PRIMARY KEY,\n\
+               device_id    TEXT NOT NULL,\n\
+               display_name TEXT NOT NULL,\n\
+               profile      TEXT NOT NULL DEFAULT 'kid',\n\
+               cursor       TEXT NOT NULL DEFAULT '',\n\
+               created_at   TEXT NOT NULL\n\
+             );\n\
+             DROP TABLE IF EXISTS sync_state;",
+        )
+        .execute(&pool)
+        .await?;
+        version = 5;
+    }
+
     // PRAGMA does not accept bind params; SCHEMA_VERSION is a trusted constant,
     // so asserting the formatted string is injection-safe is correct here.
     sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -158,13 +181,25 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-pub async fn list_conversations(pool: &SqlitePool) -> Result<Vec<Conversation>> {
+pub async fn list_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<Conversation>> {
     let rows = sqlx::query_as::<_, Conversation>(
-        "SELECT id, title, created_at, updated_at FROM conversations ORDER BY updated_at DESC",
+        "SELECT id, title, created_at, updated_at FROM conversations \
+         WHERE user_id = ? ORDER BY updated_at DESC",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows)
+}
+
+/// The owning user_id of a conversation, or None if it doesn't exist or is
+/// unowned (a pre-multi-user row with NULL user_id).
+pub async fn conversation_user_id(pool: &SqlitePool, conversation_id: &str) -> Result<Option<String>> {
+    let row = sqlx::query("SELECT user_id FROM conversations WHERE id = ?")
+        .bind(conversation_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row.and_then(|r| r.get::<Option<String>, _>("user_id")))
 }
 
 pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Vec<Message>> {
@@ -178,22 +213,20 @@ pub async fn get_messages(pool: &SqlitePool, conversation_id: &str) -> Result<Ve
     Ok(rows)
 }
 
-pub async fn create_conversation(pool: &SqlitePool, title: &str) -> Result<Conversation> {
+pub async fn create_conversation(pool: &SqlitePool, title: &str, user_id: &str) -> Result<Conversation> {
     let id = Uuid::new_v4().to_string();
     let now = now_iso();
-    sqlx::query("INSERT INTO conversations (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)")
-        .bind(&id)
-        .bind(title)
-        .bind(&now)
-        .bind(&now)
-        .execute(pool)
-        .await?;
-    Ok(Conversation {
-        id,
-        title: title.to_string(),
-        created_at: now.clone(),
-        updated_at: now,
-    })
+    sqlx::query(
+        "INSERT INTO conversations (id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+    )
+    .bind(&id)
+    .bind(user_id)
+    .bind(title)
+    .bind(&now)
+    .bind(&now)
+    .execute(pool)
+    .await?;
+    Ok(Conversation { id, title: title.to_string(), created_at: now.clone(), updated_at: now })
 }
 
 pub async fn insert_message(
@@ -288,17 +321,101 @@ pub async fn set_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<()
     Ok(())
 }
 
+pub async fn upsert_user(
+    pool: &SqlitePool,
+    user_id: &str,
+    device_id: &str,
+    display_name: &str,
+    profile: &str,
+) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO users (user_id, device_id, display_name, profile, cursor, created_at) \
+         VALUES (?, ?, ?, ?, '', ?) \
+         ON CONFLICT(user_id) DO UPDATE SET \
+           device_id = excluded.device_id, \
+           display_name = excluded.display_name, \
+           profile = excluded.profile",
+    )
+    .bind(user_id)
+    .bind(device_id)
+    .bind(display_name)
+    .bind(profile)
+    .bind(now_iso())
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+fn user_from_row(r: &sqlx::sqlite::SqliteRow) -> User {
+    User {
+        user_id: r.get("user_id"),
+        device_id: r.get("device_id"),
+        display_name: r.get("display_name"),
+        profile: r.get("profile"),
+        cursor: r.get("cursor"),
+    }
+}
+
+pub async fn list_users(pool: &SqlitePool) -> Result<Vec<User>> {
+    let rows = sqlx::query(
+        "SELECT user_id, device_id, display_name, profile, cursor FROM users ORDER BY created_at ASC",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.iter().map(user_from_row).collect())
+}
+
+pub async fn get_user(pool: &SqlitePool, user_id: &str) -> Result<Option<User>> {
+    let row = sqlx::query(
+        "SELECT user_id, device_id, display_name, profile, cursor FROM users WHERE user_id = ?",
+    )
+    .bind(user_id)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.as_ref().map(user_from_row))
+}
+
+pub async fn set_user_profile(pool: &SqlitePool, user_id: &str, profile: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET profile = ? WHERE user_id = ?")
+        .bind(profile)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn set_user_cursor(pool: &SqlitePool, user_id: &str, cursor: &str) -> Result<()> {
+    sqlx::query("UPDATE users SET cursor = ? WHERE user_id = ?")
+        .bind(cursor)
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn get_active_user_id(pool: &SqlitePool) -> Result<Option<String>> {
+    Ok(get_setting(pool, "active_user_id")
+        .await?
+        .filter(|s| !s.is_empty()))
+}
+
+pub async fn set_active_user_id(pool: &SqlitePool, user_id: &str) -> Result<()> {
+    set_setting(pool, "active_user_id", user_id).await
+}
+
 pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<ConvRow>> {
     let rows = sqlx::query(
-        "SELECT id, title, created_at, updated_at FROM conversations WHERE pending_push = 1",
+        "SELECT id, user_id, title, created_at, updated_at FROM conversations \
+         WHERE pending_push = 1 AND user_id = ?",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
         .map(|r| ConvRow {
             id: r.get("id"),
-            user_id: user_id.to_string(),
+            user_id: r.get("user_id"),
             title: Some(r.get::<String, _>("title")),
             created_at: r.get("created_at"),
             updated_at: r.get("updated_at"),
@@ -306,11 +423,13 @@ pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Resu
         .collect())
 }
 
-pub async fn get_pending_messages(pool: &SqlitePool) -> Result<Vec<MsgRow>> {
+pub async fn get_pending_messages(pool: &SqlitePool, user_id: &str) -> Result<Vec<MsgRow>> {
     let rows = sqlx::query(
-        "SELECT id, conversation_id, role, content, served_model, created_at \
-         FROM messages WHERE pending_push = 1 ORDER BY created_at ASC, id ASC",
+        "SELECT m.id, m.conversation_id, m.role, m.content, m.served_model, m.created_at \
+         FROM messages m JOIN conversations c ON c.id = m.conversation_id \
+         WHERE m.pending_push = 1 AND c.user_id = ? ORDER BY m.created_at ASC, m.id ASC",
     )
+    .bind(user_id)
     .fetch_all(pool)
     .await?;
     Ok(rows
@@ -419,34 +538,6 @@ pub async fn upsert_pulled_memory(pool: &SqlitePool, m: &MemRow) -> Result<()> {
     Ok(())
 }
 
-pub async fn get_sync_state(pool: &SqlitePool) -> Result<SyncState> {
-    let r = sqlx::query("SELECT device_id, user_id, cursor FROM sync_state WHERE id = 1")
-        .fetch_one(pool)
-        .await?;
-    Ok(SyncState {
-        device_id: r.get("device_id"),
-        user_id: r.get("user_id"),
-        cursor: r.get("cursor"),
-    })
-}
-
-pub async fn set_sync_identity(pool: &SqlitePool, device_id: &str, user_id: &str) -> Result<()> {
-    sqlx::query("UPDATE sync_state SET device_id = ?, user_id = ? WHERE id = 1")
-        .bind(device_id)
-        .bind(user_id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-pub async fn set_sync_cursor(pool: &SqlitePool, cursor: &str) -> Result<()> {
-    sqlx::query("UPDATE sync_state SET cursor = ? WHERE id = 1")
-        .bind(cursor)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,7 +552,7 @@ mod tests {
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(version, 4);
+        assert_eq!(version, 5);
 
         let msg_cols: Vec<String> =
             sqlx::query_scalar("SELECT name FROM pragma_table_info('messages')")
@@ -481,13 +572,6 @@ mod tests {
         assert!(conv_cols.iter().any(|c| c == "user_id"));
         assert!(conv_cols.iter().any(|c| c == "pending_push"));
 
-        // sync_state seeded with exactly one row
-        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sync_state")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(n, 1);
-
         // memories table exists
         sqlx::query("SELECT id, user_id, text, source_conversation, updated_at FROM memories")
             .fetch_all(&pool)
@@ -506,11 +590,11 @@ mod tests {
     #[tokio::test]
     async fn pending_then_pushed_clears_queue() {
         let pool = fresh_pool("firefly_test_queue.db").await;
-        let c = create_conversation(&pool, "hi").await.unwrap();
+        let c = create_conversation(&pool, "hi", "user-1").await.unwrap();
         insert_message(&pool, &c.id, "user", "yo", true, false).await.unwrap();
 
         let pc = get_pending_conversations(&pool, "user-1").await.unwrap();
-        let pm = get_pending_messages(&pool).await.unwrap();
+        let pm = get_pending_messages(&pool, "user-1").await.unwrap();
         assert_eq!(pc.len(), 1);
         assert_eq!(pc[0].user_id, "user-1");
         assert_eq!(pm.len(), 1);
@@ -519,13 +603,13 @@ mod tests {
         mark_messages_pushed(&pool, &[pm[0].id.clone()]).await.unwrap();
 
         assert!(get_pending_conversations(&pool, "user-1").await.unwrap().is_empty());
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "user-1").await.unwrap().is_empty());
     }
 
     #[tokio::test]
     async fn private_message_is_never_queued_for_push() {
         let pool = fresh_pool("firefly_test_private.db").await;
-        let c = create_conversation(&pool, "secret").await.unwrap();
+        let c = create_conversation(&pool, "secret", "u1").await.unwrap();
         // private user message: pending=false, local_only=true
         insert_message(&pool, &c.id, "user", "ssh", false, true).await.unwrap();
         // private assistant placeholder, then finalized via update_message_content
@@ -533,11 +617,11 @@ mod tests {
         update_message_content(&pool, &a.id, "secret reply").await.unwrap();
 
         // neither private message is ever pending for push
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "u1").await.unwrap().is_empty());
 
         // a normal (non-private) message in the same conversation DOES queue
         let n = insert_message(&pool, &c.id, "user", "hi", true, false).await.unwrap();
-        let pm = get_pending_messages(&pool).await.unwrap();
+        let pm = get_pending_messages(&pool, "u1").await.unwrap();
         assert_eq!(pm.len(), 1);
         assert_eq!(pm[0].id, n.id);
     }
@@ -545,7 +629,7 @@ mod tests {
     #[tokio::test]
     async fn mark_conversations_pushed_is_guarded_by_updated_at() {
         let pool = fresh_pool("firefly_test_markguard.db").await;
-        let c = create_conversation(&pool, "t").await.unwrap();
+        let c = create_conversation(&pool, "t", "u").await.unwrap();
         let snapshot = get_pending_conversations(&pool, "u").await.unwrap();
         assert_eq!(snapshot.len(), 1);
 
@@ -598,7 +682,7 @@ mod tests {
         assert_eq!(rows[0].content, "first");
         assert_eq!(rows[0].served_model.as_deref(), Some("chat-heavy"));
         // pulled rows are not re-queued for push
-        assert!(get_pending_messages(&pool).await.unwrap().is_empty());
+        assert!(get_pending_messages(&pool, "u").await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -637,19 +721,76 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn sync_state_round_trips() {
-        let pool = fresh_pool("firefly_test_state.db").await;
-        let s0 = get_sync_state(&pool).await.unwrap();
-        assert_eq!(s0.device_id, "");
-        assert_eq!(s0.cursor, "");
+    async fn migration_v5_adds_users_and_drops_sync_state() {
+        let pool = fresh_pool("firefly_test_v5.db").await;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool).await.unwrap();
+        assert_eq!(version, 5);
 
-        set_sync_identity(&pool, "dev-1", "user-1").await.unwrap();
-        set_sync_cursor(&pool, "2026-06-06T14:03:21.118Z").await.unwrap();
+        // users table exists with the expected columns
+        let cols: Vec<String> = sqlx::query_scalar("SELECT name FROM pragma_table_info('users')")
+            .fetch_all(&pool).await.unwrap();
+        for c in ["user_id", "device_id", "display_name", "profile", "cursor", "created_at"] {
+            assert!(cols.iter().any(|x| x == c), "missing users.{c}");
+        }
 
-        let s1 = get_sync_state(&pool).await.unwrap();
-        assert_eq!(s1.device_id, "dev-1");
-        assert_eq!(s1.user_id, "user-1");
-        assert_eq!(s1.cursor, "2026-06-06T14:03:21.118Z");
+        // sync_state is gone
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_state'",
+        ).fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn users_and_active_user_round_trip() {
+        let pool = fresh_pool("firefly_test_users.db").await;
+        assert!(list_users(&pool).await.unwrap().is_empty());
+        assert!(get_active_user_id(&pool).await.unwrap().is_none());
+
+        upsert_user(&pool, "u1", "d1", "Alice", "kid").await.unwrap();
+        upsert_user(&pool, "u2", "d2", "Bob", "adult").await.unwrap();
+        assert_eq!(list_users(&pool).await.unwrap().len(), 2);
+
+        let u1 = get_user(&pool, "u1").await.unwrap().unwrap();
+        assert_eq!(u1.display_name, "Alice");
+        assert_eq!(u1.profile, "kid");
+
+        set_user_profile(&pool, "u1", "adult").await.unwrap();
+        assert_eq!(get_user(&pool, "u1").await.unwrap().unwrap().profile, "adult");
+
+        set_user_cursor(&pool, "u1", "2026-06-06T00:00:00.000Z").await.unwrap();
+        assert_eq!(get_user(&pool, "u1").await.unwrap().unwrap().cursor, "2026-06-06T00:00:00.000Z");
+
+        set_active_user_id(&pool, "u2").await.unwrap();
+        assert_eq!(get_active_user_id(&pool).await.unwrap().as_deref(), Some("u2"));
+    }
+
+    #[tokio::test]
+    async fn conversations_and_queue_are_user_scoped() {
+        let pool = fresh_pool("firefly_test_scope.db").await;
+        let a = create_conversation(&pool, "alice chat", "u1").await.unwrap();
+        let _b = create_conversation(&pool, "bob chat", "u2").await.unwrap();
+        insert_message(&pool, &a.id, "user", "hi", true, false).await.unwrap();
+
+        // list is scoped by user
+        let alice = list_conversations(&pool, "u1").await.unwrap();
+        assert_eq!(alice.len(), 1);
+        assert_eq!(alice[0].title, "alice chat");
+
+        // pending queue is scoped by user (join through conversations.user_id)
+        assert_eq!(get_pending_conversations(&pool, "u1").await.unwrap().len(), 1);
+        assert!(get_pending_conversations(&pool, "u2").await.unwrap()
+            .iter().all(|c| c.title.as_deref() != Some("alice chat")));
+        assert_eq!(get_pending_messages(&pool, "u1").await.unwrap().len(), 1);
+        assert!(get_pending_messages(&pool, "u2").await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn conversation_user_id_returns_owner_or_none() {
+        let pool = fresh_pool("firefly_test_owner.db").await;
+        let c = create_conversation(&pool, "alice", "u1").await.unwrap();
+        assert_eq!(conversation_user_id(&pool, &c.id).await.unwrap().as_deref(), Some("u1"));
+        assert_eq!(conversation_user_id(&pool, "missing").await.unwrap(), None);
     }
 
     #[test]

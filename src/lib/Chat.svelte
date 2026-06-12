@@ -12,13 +12,22 @@
   let {
     conversationId,
     refreshSignal = 0,
-  }: { conversationId: string | null; refreshSignal?: number } = $props();
+    profile = "adult",
+  }: { conversationId: string | null; refreshSignal?: number; profile?: "kid" | "adult" } = $props();
+
+  const isKid = $derived(profile === "kid");
 
   let messages = $state<ChatMessage[]>([]);
   let draft = $state("");
   let task = $state<TaskHint>("agentic");
   let sending = $state(false);
   let error = $state<string | null>(null);
+
+  $effect(() => {
+    if (isKid && !["agentic", "quick", "private"].includes(task)) {
+      task = "agentic";
+    }
+  });
 
   $effect(() => {
     const id = conversationId;
@@ -119,12 +128,14 @@
     <form class="composer" onsubmit={submit}>
       <select bind:value={task} class="task" title="Task tier">
         <option value="agentic">agentic</option>
-        <option value="write">write</option>
-        <option value="explain-file">explain-file</option>
-        <option value="code-complete">code-complete</option>
         <option value="quick">quick</option>
         <option value="private">private (on-device)</option>
-        <option value="best">best (cloud)</option>
+        {#if !isKid}
+          <option value="write">write</option>
+          <option value="explain-file">explain-file</option>
+          <option value="code-complete">code-complete</option>
+          <option value="best">best (cloud)</option>
+        {/if}
       </select>
       <textarea
         placeholder="Message Firefly…"

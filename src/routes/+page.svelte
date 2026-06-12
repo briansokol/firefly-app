@@ -4,11 +4,7 @@
     createConversation,
     getSettings,
     setSettings,
-    setToken,
-    hasToken,
     syncNow,
-    setSyncToken,
-    hasSyncToken,
     type SyncStatus,
     checkFirefly,
     checkOnDevice,
@@ -16,6 +12,11 @@
     type Conversation,
     type Settings,
     type OnDeviceStatus,
+    listProfiles,
+    registerProfile,
+    switchProfile,
+    refreshActiveProfile,
+    type Profile,
   } from "$lib/api";
   import ConversationList from "$lib/ConversationList.svelte";
   import Chat from "$lib/Chat.svelte";
@@ -50,12 +51,16 @@
       pulling = false;
     }
   }
-  let tokenPresent = $state(true);
   let syncing = $state(false);
   let syncStatus = $state<SyncStatus | null>(null);
   let syncTick = $state(0);
-  let syncTokenInput = $state("");
-  let syncTokenPresent = $state(true);
+
+  let profiles = $state<Profile[]>([]);
+  let newProfileName = $state("");
+  let registering = $state(false);
+  let error = $state<string | null>(null);
+
+  const active = $derived(profiles.find((p) => p.active) ?? null);
 
   async function runSync() {
     if (syncing) return;
@@ -71,7 +76,6 @@
     }
   }
   let showSettings = $state(false);
-  let tokenInput = $state("");
   let savedNote = $state("");
   let saveError = $state("");
 
@@ -85,11 +89,13 @@
   $effect(() => {
     (async () => {
       settings = await getSettings();
+      profiles = await listProfiles();
+      if (profiles.length > 0) {
+        // pick up server-side kid->adult upgrades for the active profile
+        profiles = await refreshActiveProfile();
+      }
       checkFirefly().then((r) => (reachable = r));
       checkOnDevice().then((r) => (onDevice = r));
-      tokenPresent = await hasToken();
-      syncTokenPresent = await hasSyncToken();
-      if (!tokenPresent) showSettings = true;
       await refresh();
       runSync();
     })();
@@ -114,26 +120,6 @@
       memoryEnabled: settings.memoryEnabled,
     });
     saveError = "";
-    if (tokenInput.trim()) {
-      try {
-        await setToken(tokenInput.trim());
-        tokenInput = "";
-      } catch (e) {
-        saveError = String(e);
-        return;
-      }
-    }
-    if (syncTokenInput.trim()) {
-      try {
-        await setSyncToken(syncTokenInput.trim());
-        syncTokenInput = "";
-      } catch (e) {
-        saveError = String(e);
-        return;
-      }
-    }
-    syncTokenPresent = await hasSyncToken();
-    tokenPresent = await hasToken();
     reachable = await checkFirefly();
     savedNote = "Saved";
     setTimeout(() => (savedNote = ""), 1500);
@@ -141,114 +127,145 @@
 </script>
 
 <div class="app">
-  <ConversationList
-    {conversations}
-    {selectedId}
-    onselect={(id) => (selectedId = id)}
-    onnew={newConversation}
-  />
-
-  <main>
-    <header>
-      <span class="title">Firefly</span>
-      <span class="conn" class:down={reachable === false}>
-        {reachable === null ? "…" : reachable ? "Firefly online" : "Firefly offline"}
-      </span>
-      <span class="conn" class:down={syncStatus?.ok === false}>
-        {syncing
-          ? "syncing…"
-          : syncStatus == null
-            ? "sync idle"
-            : syncStatus.ok
-              ? "synced"
-              : syncStatus.message ?? "offline"}
-      </span>
-      <button class="gear" onclick={runSync} disabled={syncing}>⟳ Sync now</button>
-      {#if !tokenPresent}
-        <span class="warn">no token set</span>
+  {#if profiles.length === 0}
+    <div class="onboard">
+      <h2>Create a profile</h2>
+      <p>New profiles start as a kid profile. An adult can upgrade it later on the server.</p>
+      {#if error}
+        <p class="onboard-error">{error}</p>
       {/if}
-      <button class="gear" onclick={() => (showSettings = !showSettings)}>
-        ⚙ Settings
-      </button>
-    </header>
+      <input aria-label="Display name" placeholder="Display name" bind:value={newProfileName} />
+      <button
+        disabled={registering || !newProfileName.trim()}
+        onclick={async () => {
+          registering = true;
+          error = null;
+          try {
+            profiles = await registerProfile(newProfileName.trim());
+            newProfileName = "";
+            await refresh();
+            runSync();
+          } catch (e) {
+            error = String(e);
+          } finally {
+            registering = false;
+          }
+        }}
+      >{registering ? "Creating…" : "Create"}</button>
+    </div>
+  {:else}
+    <ConversationList
+      {conversations}
+      {selectedId}
+      onselect={(id) => (selectedId = id)}
+      onnew={newConversation}
+    />
 
-    {#if showSettings}
-      <div class="settings">
-        <label>
-          Firefly endpoint
-          <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
-        </label>
-        <label>Sync endpoint
-          <input bind:value={settings.syncEndpoint} spellcheck="false" />
-        </label>
-        <label>Device name
-          <input bind:value={settings.deviceName} spellcheck="false" />
-        </label>
-        <label>On-device endpoint
-          <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
-        </label>
-        <label>On-device model
-          <input bind:value={settings.onDeviceModel} spellcheck="false" />
-        </label>
-        {#if onDevice}
-          <div class="ready" class:down={onDevice.state === "unreachable"}>
-            {#if onDevice.state === "ready"}
-              on-device ready · {onDevice.model}
-            {:else if onDevice.state === "modelMissing"}
-              model not installed
-              <button type="button" onclick={pullModel} disabled={pulling}>
-                {pulling ? `pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
-              </button>
-            {:else}
-              server unreachable: install &amp; start Ollama, then pull the model:
-              <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
-              <br />(Framework NPU: run <code>flm serve</code> + <code>flm pull {settings.onDeviceModel}</code> instead)
-            {/if}
+    <main>
+      <header>
+        <span class="title">Firefly</span>
+        <span class="conn" class:down={reachable === false}>
+          {reachable === null ? "…" : reachable ? "Firefly online" : "Firefly offline"}
+        </span>
+        <span class="conn" class:down={syncStatus?.ok === false}>
+          {syncing
+            ? "syncing…"
+            : syncStatus == null
+              ? "sync idle"
+              : syncStatus.ok
+                ? "synced"
+                : syncStatus.message ?? "offline"}
+        </span>
+        <select
+          aria-label="Switch profile"
+          value={active?.userId ?? ""}
+          onchange={async (e) => {
+            const target = e.currentTarget as HTMLSelectElement;
+            try {
+              profiles = await switchProfile(target.value);
+              selectedId = null;
+              await refresh();
+              runSync();
+            } catch (err) {
+              error = String(err);
+              // re-sync the dropdown to the actual active profile
+              profiles = await listProfiles();
+            }
+          }}
+        >
+          {#each profiles as p (p.userId)}
+            <option value={p.userId}>{p.displayName}</option>
+          {/each}
+        </select>
+        {#if active}
+          <span class="profile-badge">{active.profile}</span>
+        {/if}
+        <button class="gear" onclick={runSync} disabled={syncing}>⟳ Sync now</button>
+        <button class="gear" onclick={() => (showSettings = !showSettings)}>
+          ⚙ Settings
+        </button>
+      </header>
+
+      {#if showSettings}
+        <div class="settings">
+          <label>
+            Firefly endpoint
+            <input bind:value={settings.fireflyEndpoint} spellcheck="false" />
+          </label>
+          <label>Sync endpoint
+            <input bind:value={settings.syncEndpoint} spellcheck="false" />
+          </label>
+          <label>Device name
+            <input bind:value={settings.deviceName} spellcheck="false" />
+          </label>
+          <label>On-device endpoint
+            <input bind:value={settings.onDeviceEndpoint} spellcheck="false" />
+          </label>
+          <label>On-device model
+            <input bind:value={settings.onDeviceModel} spellcheck="false" />
+          </label>
+          {#if onDevice}
+            <div class="ready" class:down={onDevice.state === "unreachable"}>
+              {#if onDevice.state === "ready"}
+                on-device ready · {onDevice.model}
+              {:else if onDevice.state === "modelMissing"}
+                model not installed
+                <button type="button" onclick={pullModel} disabled={pulling}>
+                  {pulling ? `pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
+                </button>
+              {:else}
+                server unreachable: install &amp; start Ollama, then pull the model:
+                <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
+                <br />(Framework NPU: run <code>flm serve</code> + <code>flm pull {settings.onDeviceModel}</code> instead)
+              {/if}
+            </div>
+          {/if}
+          <label>Home-base model: code/write
+            <input bind:value={settings.modelCode} spellcheck="false" />
+          </label>
+          <label>Home-base model: agentic
+            <input bind:value={settings.modelChatHeavy} spellcheck="false" />
+          </label>
+          <label class="toggle">
+            <input type="checkbox" bind:checked={settings.memoryEnabled} />
+            Inject memories on home-base requests
+          </label>
+          <label>Cloud model: best
+            <input bind:value={settings.modelFrontier} spellcheck="false" />
+          </label>
+          <div class="actions">
+            <button onclick={saveSettings}>Save</button>
+            <span class="note">{savedNote}</span>
           </div>
-        {/if}
-        <label>Home-base model: code/write
-          <input bind:value={settings.modelCode} spellcheck="false" />
-        </label>
-        <label>Home-base model: agentic
-          <input bind:value={settings.modelChatHeavy} spellcheck="false" />
-        </label>
-        <label class="toggle">
-          <input type="checkbox" bind:checked={settings.memoryEnabled} />
-          Inject memories on home-base requests
-        </label>
-        <label>Cloud model: best
-          <input bind:value={settings.modelFrontier} spellcheck="false" />
-        </label>
-        <label>
-          Device token {tokenPresent ? "(stored — leave blank to keep)" : "(required)"}
-          <input
-            type="password"
-            bind:value={tokenInput}
-            placeholder="sk-…"
-            spellcheck="false"
-          />
-        </label>
-        <label>
-          Sync token {syncTokenPresent ? "(stored — leave blank to keep)" : "(required)"}
-          <input
-            type="password"
-            bind:value={syncTokenInput}
-            placeholder="sync-…"
-            spellcheck="false"
-          />
-        </label>
-        <div class="actions">
-          <button onclick={saveSettings}>Save</button>
-          <span class="note">{savedNote}</span>
+          {#if saveError}
+            <p class="save-error">{saveError}</p>
+          {/if}
         </div>
-        {#if saveError}
-          <p class="save-error">{saveError}</p>
-        {/if}
-      </div>
-    {/if}
+      {/if}
 
-    <Chat conversationId={selectedId} refreshSignal={syncTick} />
-  </main>
+      <Chat conversationId={selectedId} refreshSignal={syncTick} profile={active?.profile ?? "adult"} />
+    </main>
+  {/if}
 </div>
 
 <style>
@@ -320,10 +337,6 @@
     color: white;
     cursor: pointer;
   }
-  .warn {
-    font-size: 0.75rem;
-    color: #ffb3b3;
-  }
   .gear {
     margin-left: auto;
     background: transparent;
@@ -377,6 +390,70 @@
   .save-error {
     margin: 0.5rem 0 0;
     color: #ffb3b3;
+    font-size: 0.85rem;
+  }
+  .onboard {
+    margin: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+    padding: 2rem;
+    max-width: 360px;
+    width: 100%;
+  }
+  .onboard h2 {
+    margin: 0;
+    font-size: 1.2rem;
+  }
+  .onboard p {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--muted);
+  }
+  .onboard input {
+    padding: 0.5rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+    font-family: inherit;
+    font-size: 0.95rem;
+  }
+  .onboard button {
+    padding: 0.5rem 1rem;
+    border-radius: 8px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-weight: 600;
+    cursor: pointer;
+    align-self: flex-start;
+  }
+  .onboard button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .onboard-error {
+    margin: 0;
+    color: #ffb3b3;
+    font-size: 0.85rem;
+  }
+  .profile-badge {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.1rem 0.5rem;
+    color: var(--muted);
+  }
+  header select {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 0.25rem 0.5rem;
+    font-family: inherit;
     font-size: 0.85rem;
   }
 </style>

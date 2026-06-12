@@ -55,14 +55,23 @@ export const getMessages = (conversationId: string) =>
 export const createConversation = (title: string) =>
   invoke<Conversation>("create_conversation", { title });
 
-export const setToken = (token: string) => invoke<void>("set_token", { token });
+export interface Profile {
+  userId: string;
+  displayName: string;
+  profile: "kid" | "adult";
+  active: boolean;
+}
 
-export const hasToken = () => invoke<boolean>("has_token");
+export const listProfiles = () => invoke<Profile[]>("list_profiles");
 
-export const setSyncToken = (token: string) =>
-  invoke<void>("set_sync_token", { token });
+export const registerProfile = (displayName: string) =>
+  invoke<Profile[]>("register_profile", { displayName });
 
-export const hasSyncToken = () => invoke<boolean>("has_sync_token");
+export const switchProfile = (userId: string) =>
+  invoke<Profile[]>("switch_profile", { userId });
+
+export const refreshActiveProfile = () =>
+  invoke<Profile[]>("refresh_active_profile");
 
 export interface SyncStatus {
   ok: boolean;

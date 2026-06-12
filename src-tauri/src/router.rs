@@ -25,6 +25,12 @@ pub enum Tier {
     Cloud,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Profile {
+    Kid,
+    Adult,
+}
+
 impl Tier {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -59,6 +65,7 @@ pub struct RouteInputs<'a> {
     pub model_chat_heavy: &'a str,
     pub model_frontier: &'a str,
     pub firefly_reachable: bool,
+    pub profile: Profile,
 }
 
 /// Map a task hint + settings + live reachability to a concrete route per
@@ -79,6 +86,13 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
         degraded: false,
     };
 
+    let kid_refused = |what: &str| {
+        RouteError::Refused(format!(
+            "{what} is not available for a kid profile; ask an adult"
+        ))
+    };
+    let is_kid = i.profile == Profile::Kid;
+
     match task {
         // Privacy-critical: on-device only, always. Enforced here, not just in UI.
         TaskHint::Private => Ok(on_device(false)),
@@ -87,6 +101,8 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
         TaskHint::CodeComplete => {
             if !i.on_device_endpoint.trim().is_empty() {
                 Ok(on_device(false))
+            } else if is_kid {
+                Err(kid_refused("code"))
             } else if i.firefly_reachable {
                 Ok(home_base(i.model_code))
             } else {
@@ -97,8 +113,14 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
         }
         TaskHint::Write | TaskHint::ExplainFile => {
             if i.firefly_reachable {
-                Ok(home_base(i.model_code))
+                if is_kid {
+                    Err(kid_refused("code"))
+                } else {
+                    Ok(home_base(i.model_code))
+                }
             } else {
+                // Offline: a kid degrades to on-device like anyone else — the local
+                // model carries no restricted key, so no refusal is needed here.
                 Ok(on_device(true))
             }
         }
@@ -110,7 +132,9 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
             }
         }
         TaskHint::Best => {
-            if i.firefly_reachable {
+            if is_kid {
+                Err(kid_refused("frontier"))
+            } else if i.firefly_reachable {
                 Ok(Route {
                     tier: Tier::Cloud,
                     endpoint: resolve_endpoint(i.firefly_endpoint),
@@ -191,6 +215,7 @@ mod tests {
             model_chat_heavy: "chat-heavy",
             model_frontier: "frontier",
             firefly_reachable: reachable,
+            profile: Profile::Adult,
         }
     }
 
@@ -284,5 +309,51 @@ mod tests {
             resolve_route(TaskHint::Best, &inputs(false)),
             Err(RouteError::Refused(_))
         ));
+    }
+
+    #[test]
+    fn kid_is_refused_code_on_home_base() {
+        let mut i = inputs(true);
+        i.profile = Profile::Kid;
+        assert!(matches!(resolve_route(TaskHint::Write, &i), Err(RouteError::Refused(_))));
+        assert!(matches!(resolve_route(TaskHint::ExplainFile, &i), Err(RouteError::Refused(_))));
+    }
+
+    #[test]
+    fn kid_is_refused_frontier() {
+        let mut i = inputs(true);
+        i.profile = Profile::Kid;
+        assert!(matches!(resolve_route(TaskHint::Best, &i), Err(RouteError::Refused(_))));
+    }
+
+    #[test]
+    fn kid_is_refused_code_complete_home_base_fallback() {
+        let mut i = inputs(true);
+        i.profile = Profile::Kid;
+        i.on_device_endpoint = ""; // forces home-base `code`
+        assert!(matches!(resolve_route(TaskHint::CodeComplete, &i), Err(RouteError::Refused(_))));
+    }
+
+    #[test]
+    fn kid_write_degrades_to_on_device_when_offline() {
+        let mut i = inputs(false);
+        i.profile = Profile::Kid;
+        let r = resolve_route(TaskHint::Write, &i).unwrap();
+        assert_eq!(r.tier, Tier::OnDevice);
+        assert!(r.degraded);
+        let r2 = resolve_route(TaskHint::ExplainFile, &i).unwrap();
+        assert_eq!(r2.tier, Tier::OnDevice);
+        assert!(r2.degraded);
+    }
+
+    #[test]
+    fn kid_keeps_agentic_quick_private_and_on_device_code_complete() {
+        let mut i = inputs(true);
+        i.profile = Profile::Kid;
+        assert_eq!(resolve_route(TaskHint::Agentic, &i).unwrap().model, "chat-heavy");
+        assert_eq!(resolve_route(TaskHint::Quick, &i).unwrap().tier, Tier::OnDevice);
+        assert_eq!(resolve_route(TaskHint::Private, &i).unwrap().tier, Tier::OnDevice);
+        // code-complete with an on-device endpoint stays local — allowed for kids
+        assert_eq!(resolve_route(TaskHint::CodeComplete, &i).unwrap().tier, Tier::OnDevice);
     }
 }

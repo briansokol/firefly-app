@@ -1,9 +1,40 @@
 use crate::error::{AppError, Result};
 use eventsource_stream::Eventsource;
 use futures_util::StreamExt;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tauri::ipc::Channel;
+
+#[derive(Deserialize)]
+struct ModelsResponse {
+    #[serde(default)]
+    data: Vec<ModelEntry>,
+}
+
+#[derive(Deserialize)]
+struct ModelEntry {
+    id: String,
+}
+
+/// Pure: extract logical model ids from a `GET /v1/models` body. Returns empty on
+/// any parse failure (caller treats that as "could not determine").
+pub fn parse_model_ids(json: &str) -> Vec<String> {
+    serde_json::from_str::<ModelsResponse>(json)
+        .map(|r| r.data.into_iter().map(|m| m.id).collect())
+        .unwrap_or_default()
+}
+
+/// List the logical model names a LiteLLM key is allowed to resolve. Used to
+/// derive whether the active profile is `kid` or `adult`. See API-CONTRACT.md §2.
+pub async fn list_models(endpoint: &str, key: &str) -> Result<Vec<String>> {
+    let url = format!("{}/v1/models", endpoint.trim_end_matches('/'));
+    let resp = reqwest::Client::new().get(&url).bearer_auth(key).send().await?;
+    if !resp.status().is_success() {
+        return Err(AppError::Other(format!("models HTTP {}", resp.status())));
+    }
+    let text = resp.text().await?;
+    Ok(parse_model_ids(&text))
+}
 
 #[derive(Clone, Serialize)]
 pub struct ChatMsg {
@@ -105,4 +136,20 @@ pub async fn stream_chat(
 
     let _ = channel.send(StreamEvent::Done);
     Ok(accumulated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_model_ids_reads_data_ids() {
+        let json = r#"{"object":"list","data":[{"id":"fast"},{"id":"chat-heavy"},{"id":"code"}]}"#;
+        assert_eq!(parse_model_ids(json), vec!["fast", "chat-heavy", "code"]);
+    }
+
+    #[test]
+    fn parse_model_ids_is_empty_on_garbage() {
+        assert!(parse_model_ids("not json").is_empty());
+    }
 }
