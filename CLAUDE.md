@@ -14,6 +14,13 @@ on-device readiness spec (§6.1), the sync spec (§7), and the **Guardrails (§4
 Guardrails before changing routing, secrets, or storage. Work is tracked by phase; the
 current branch is `phase-2-router`.
 
+`DESIGN.md` is the authoritative **visual** reference ("Velvet Glow": dark violet
+surfaces, one violet gradient accent, soft pills, a rationed amber firefly spark, glow
+effects, Baloo 2 + Nunito). Read it before any UI/CSS change or new screen. The design
+system is vendored in `src/lib/styles/` (tokens + `.ff-*` classes, loaded once via
+`src/routes/+layout.svelte`); fonts are bundled in `static/fonts/`. Always style with the
+`--ff-*` tokens and `.ff-*` classes rather than hardcoded values.
+
 ## Commands
 
 Run frontend/Tauri commands from the repo root; Rust commands from `src-tauri/`.

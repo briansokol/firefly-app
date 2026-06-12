@@ -1,0 +1,22 @@
+/* Firefly Design System — "Velvet Glow" global entry point.
+   Vendored from the firefly-design-system handoff bundle. See DESIGN.md.
+   Import this single file once (src/routes/+layout.svelte); the app <body>
+   carries the .ff-root class (src/app.html) so tokens + base type apply globally. */
+@import url('./fonts.css');
+@import url('./colors.css');
+@import url('./typography.css');
+@import url('./spacing.css');
+@import url('./effects.css');
+@import url('./components.css');
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--ff-surface-app);
+  color: var(--ff-text-body);
+  color-scheme: dark;
+}
