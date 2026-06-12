@@ -2,6 +2,7 @@
   import {
     listConversations,
     createConversation,
+    renameConversation,
     getSettings,
     setSettings,
     syncNow,
@@ -107,6 +108,12 @@
     selectedId = c.id;
   }
 
+  async function applyRename(id: string, title: string) {
+    await renameConversation(id, title);
+    await refresh();
+    runSync();
+  }
+
   async function saveSettings() {
     await setSettings({
       fireflyEndpoint: settings.fireflyEndpoint,
@@ -178,6 +185,7 @@
       {selectedId}
       onselect={(id) => (selectedId = id)}
       onnew={newConversation}
+      onrename={applyRename}
       userName={active?.displayName ?? ""}
       {syncNote}
     />
@@ -334,7 +342,7 @@
         </div>
         {/if}
 
-        <Chat conversationId={selectedId} refreshSignal={syncTick} profile={active?.profile ?? "adult"} />
+        <Chat conversationId={selectedId} refreshSignal={syncTick} profile={active?.profile ?? "adult"} ontitled={refresh} />
       </div>
     </main>
   {/if}
