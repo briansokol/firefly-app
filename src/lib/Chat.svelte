@@ -14,11 +14,13 @@
     conversationId,
     refreshSignal = 0,
     profile = "adult",
+    isMobile = false,
     ontitled,
   }: {
     conversationId: string | null;
     refreshSignal?: number;
     profile?: "kid" | "adult";
+    isMobile?: boolean;
     ontitled?: () => void;
   } = $props();
 
@@ -32,6 +34,9 @@
 
   $effect(() => {
     if (isKid && !["agentic", "quick", "private"].includes(task)) {
+      task = "agentic";
+    }
+    if (isMobile && (task === "quick" || task === "private")) {
       task = "agentic";
     }
   });
@@ -180,8 +185,10 @@
       <form class="pillbar" onsubmit={submit}>
         <select bind:value={task} class="model" title="Task tier" aria-label="Task tier">
           <option value="agentic">Agentic</option>
-          <option value="quick">Quick</option>
-          <option value="private">Private (on-device)</option>
+          {#if !isMobile}
+            <option value="quick">Quick</option>
+            <option value="private">Private (on-device)</option>
+          {/if}
           {#if !isKid}
             <option value="write">Write</option>
             <option value="explain-file">Explain file</option>

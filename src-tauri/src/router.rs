@@ -65,18 +65,26 @@ pub struct RouteInputs<'a> {
     pub model_chat_heavy: &'a str,
     pub model_frontier: &'a str,
     pub firefly_reachable: bool,
+    pub on_device_available: bool,
     pub profile: Profile,
 }
 
 /// Map a task hint + settings + live reachability to a concrete route per
 /// PLAN-app-build.md §6. Pure: no IO, fully unit-tested.
 pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteError> {
-    let on_device = |degraded: bool| Route {
-        tier: Tier::OnDevice,
-        endpoint: resolve_endpoint(i.on_device_endpoint),
-        model: i.on_device_model.to_string(),
-        use_token: false,
-        degraded,
+    let on_device = |degraded: bool| -> Result<Route, RouteError> {
+        if !i.on_device_available {
+            return Err(RouteError::NotConfigured(
+                "on-device chat isn't available on this device".into(),
+            ));
+        }
+        Ok(Route {
+            tier: Tier::OnDevice,
+            endpoint: resolve_endpoint(i.on_device_endpoint),
+            model: i.on_device_model.to_string(),
+            use_token: false,
+            degraded,
+        })
     };
     let home_base = |model: &str| Route {
         tier: Tier::HomeBase,
@@ -95,12 +103,12 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
 
     match task {
         // Privacy-critical: on-device only, always. Enforced here, not just in UI.
-        TaskHint::Private => Ok(on_device(false)),
+        TaskHint::Private => on_device(false),
         // One-liners stay local regardless of reachability.
-        TaskHint::Quick => Ok(on_device(false)),
+        TaskHint::Quick => on_device(false),
         TaskHint::CodeComplete => {
-            if !i.on_device_endpoint.trim().is_empty() {
-                Ok(on_device(false))
+            if i.on_device_available && !i.on_device_endpoint.trim().is_empty() {
+                on_device(false)
             } else if is_kid {
                 Err(kid_refused("code"))
             } else if i.firefly_reachable {
@@ -121,14 +129,14 @@ pub fn resolve_route(task: TaskHint, i: &RouteInputs) -> Result<Route, RouteErro
             } else {
                 // Offline: a kid degrades to on-device like anyone else — the local
                 // model carries no restricted key, so no refusal is needed here.
-                Ok(on_device(true))
+                on_device(true)
             }
         }
         TaskHint::Agentic => {
             if i.firefly_reachable {
                 Ok(home_base(i.model_chat_heavy))
             } else {
-                Ok(on_device(true))
+                on_device(true)
             }
         }
         TaskHint::Best => {
@@ -215,6 +223,7 @@ mod tests {
             model_chat_heavy: "chat-heavy",
             model_frontier: "frontier",
             firefly_reachable: reachable,
+            on_device_available: true,
             profile: Profile::Adult,
         }
     }
@@ -355,5 +364,44 @@ mod tests {
         assert_eq!(resolve_route(TaskHint::Private, &i).unwrap().tier, Tier::OnDevice);
         // code-complete with an on-device endpoint stays local — allowed for kids
         assert_eq!(resolve_route(TaskHint::CodeComplete, &i).unwrap().tier, Tier::OnDevice);
+    }
+
+    #[test]
+    fn private_errors_when_on_device_unavailable() {
+        let mut i = inputs(true);
+        i.on_device_available = false;
+        assert!(matches!(
+            resolve_route(TaskHint::Private, &i),
+            Err(RouteError::NotConfigured(_))
+        ));
+    }
+
+    #[test]
+    fn quick_errors_when_on_device_unavailable() {
+        let mut i = inputs(true);
+        i.on_device_available = false;
+        assert!(matches!(
+            resolve_route(TaskHint::Quick, &i),
+            Err(RouteError::NotConfigured(_))
+        ));
+    }
+
+    #[test]
+    fn agentic_offline_errors_when_on_device_unavailable() {
+        let mut i = inputs(false);
+        i.on_device_available = false;
+        assert!(matches!(
+            resolve_route(TaskHint::Agentic, &i),
+            Err(RouteError::NotConfigured(_))
+        ));
+    }
+
+    #[test]
+    fn code_complete_falls_back_to_home_base_when_on_device_unavailable() {
+        let mut i = inputs(true);
+        i.on_device_available = false; // endpoint string still set, but device can't run it
+        let r = resolve_route(TaskHint::CodeComplete, &i).unwrap();
+        assert_eq!(r.tier, Tier::HomeBase);
+        assert_eq!(r.model, "code");
     }
 }
