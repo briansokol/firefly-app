@@ -193,7 +193,7 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool> {
 pub async fn list_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<Conversation>> {
     let rows = sqlx::query_as::<_, Conversation>(
         "SELECT id, title, created_at, updated_at FROM conversations \
-         WHERE user_id = ? ORDER BY updated_at DESC",
+         WHERE user_id = ? AND deleted_at IS NULL ORDER BY updated_at DESC",
     )
     .bind(user_id)
     .fetch_all(pool)
@@ -263,6 +263,19 @@ pub async fn update_conversation_title(
     get_conversation(pool, id)
         .await?
         .ok_or_else(|| AppError::Other("conversation not found".into()))
+}
+
+pub async fn soft_delete_conversation(pool: &SqlitePool, id: &str) -> Result<()> {
+    let now = now_iso();
+    sqlx::query(
+        "UPDATE conversations SET deleted_at = ?, updated_at = ?, pending_push = 1 WHERE id = ?",
+    )
+    .bind(&now)
+    .bind(&now)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 pub async fn insert_message(
@@ -519,12 +532,13 @@ pub async fn mark_messages_pushed(pool: &SqlitePool, ids: &[String]) -> Result<(
 
 pub async fn upsert_pulled_conversation(pool: &SqlitePool, c: &ConvRow) -> Result<()> {
     sqlx::query(
-        "INSERT INTO conversations (id, user_id, title, created_at, updated_at, pending_push) \
-         VALUES (?, ?, ?, ?, ?, 0) \
+        "INSERT INTO conversations (id, user_id, title, created_at, updated_at, deleted_at, pending_push) \
+         VALUES (?, ?, ?, ?, ?, ?, 0) \
          ON CONFLICT(id) DO UPDATE SET \
            title = excluded.title, \
            user_id = excluded.user_id, \
            updated_at = excluded.updated_at, \
+           deleted_at = excluded.deleted_at, \
            pending_push = 0 \
          WHERE excluded.updated_at >= conversations.updated_at",
     )
@@ -533,6 +547,7 @@ pub async fn upsert_pulled_conversation(pool: &SqlitePool, c: &ConvRow) -> Resul
     .bind(c.title.clone().unwrap_or_default())
     .bind(&c.created_at)
     .bind(&c.updated_at)
+    .bind(&c.deleted_at)
     .execute(pool)
     .await?;
     Ok(())
@@ -796,6 +811,49 @@ mod tests {
             "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='sync_state'",
         ).fetch_one(&pool).await.unwrap();
         assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn soft_delete_hides_and_queues_for_push() {
+        let pool = fresh_pool("firefly_test_softdelete.db").await;
+        let c = create_conversation(&pool, "doomed", "u").await.unwrap();
+        // a fresh create is pending; clear it so we isolate the delete's effect
+        mark_conversations_pushed(&pool, &get_pending_conversations(&pool, "u").await.unwrap())
+            .await.unwrap();
+
+        soft_delete_conversation(&pool, &c.id).await.unwrap();
+
+        // hidden from the active list
+        assert!(list_conversations(&pool, "u").await.unwrap().is_empty());
+        // queued for push, with deleted_at set
+        let pending = get_pending_conversations(&pool, "u").await.unwrap();
+        assert_eq!(pending.len(), 1);
+        assert!(pending[0].deleted_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn pulled_tombstone_hides_existing_conversation() {
+        let pool = fresh_pool("firefly_test_tombstone.db").await;
+        upsert_pulled_conversation(&pool, &ConvRow {
+            id: "conv-1".into(),
+            user_id: "u".into(),
+            title: Some("alive".into()),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+            updated_at: "2026-01-01T00:00:00.000Z".into(),
+            deleted_at: None,
+        }).await.unwrap();
+        assert_eq!(list_conversations(&pool, "u").await.unwrap().len(), 1);
+
+        // newer tombstone arrives
+        upsert_pulled_conversation(&pool, &ConvRow {
+            id: "conv-1".into(),
+            user_id: "u".into(),
+            title: Some("alive".into()),
+            created_at: "2026-01-01T00:00:00.000Z".into(),
+            updated_at: "2026-02-01T00:00:00.000Z".into(),
+            deleted_at: Some("2026-02-01T00:00:00.000Z".into()),
+        }).await.unwrap();
+        assert!(list_conversations(&pool, "u").await.unwrap().is_empty());
     }
 
     #[tokio::test]
