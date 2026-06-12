@@ -99,6 +99,8 @@ export const setSettings = (settings: Settings) =>
 
 export const checkFirefly = () => invoke<boolean>("check_firefly");
 
+export const platform = () => invoke<string>("platform");
+
 export type OnDeviceStatus =
   | { state: "ready"; model: string }
   | { state: "modelMissing"; model: string }

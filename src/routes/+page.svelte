@@ -10,6 +10,7 @@
     type SyncStatus,
     checkFirefly,
     checkOnDevice,
+    platform,
     pullOnDeviceModel,
     type Conversation,
     type Settings,
@@ -38,6 +39,7 @@
   });
   let reachable = $state<boolean | null>(null);
   let onDevice = $state<OnDeviceStatus | null>(null);
+  let isMobile = $state(false);
   let pulling = $state(false);
   let pullPct = $state(0);
 
@@ -96,8 +98,10 @@
         // pick up server-side kid->adult upgrades for the active profile
         profiles = await refreshActiveProfile();
       }
+      const os = await platform();
+      isMobile = os === "ios" || os === "android";
       checkFirefly().then((r) => (reachable = r));
-      checkOnDevice().then((r) => (onDevice = r));
+      if (!isMobile) checkOnDevice().then((r) => (onDevice = r));
       await refresh();
       runSync();
     })();
@@ -285,34 +289,41 @@
                 <span class="ff-label">Device name</span>
                 <input class="ff-input" bind:value={settings.deviceName} spellcheck="false" />
               </div>
-              <div class="ff-field">
-                <span class="ff-label">On-device endpoint</span>
-                <input class="ff-input" bind:value={settings.onDeviceEndpoint} spellcheck="false" />
-              </div>
-              <div class="ff-field">
-                <span class="ff-label">On-device model</span>
-                <input class="ff-input" bind:value={settings.onDeviceModel} spellcheck="false" />
-              </div>
-              {#if onDevice}
-                <div class="ready" class:down={onDevice.state === "unreachable"}>
-                  {#if onDevice.state === "ready"}
-                    On-device ready · {onDevice.model}
-                  {:else if onDevice.state === "modelMissing"}
-                    Model not installed
-                    <button
-                      type="button"
-                      class="ff-btn ff-btn--sm"
-                      onclick={pullModel}
-                      disabled={pulling}
-                    >
-                      {pulling ? `Pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
-                    </button>
-                  {:else}
-                    Server unreachable: install &amp; start Ollama, then pull the model:
-                    <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
-                    <br />(Framework NPU: run <code>flm serve</code> +
-                    <code>flm pull {settings.onDeviceModel}</code> instead)
-                  {/if}
+              {#if !isMobile}
+                <div class="ff-field">
+                  <span class="ff-label">On-device endpoint</span>
+                  <input class="ff-input" bind:value={settings.onDeviceEndpoint} spellcheck="false" />
+                </div>
+                <div class="ff-field">
+                  <span class="ff-label">On-device model</span>
+                  <input class="ff-input" bind:value={settings.onDeviceModel} spellcheck="false" />
+                </div>
+                {#if onDevice}
+                  <div class="ready" class:down={onDevice.state === "unreachable"}>
+                    {#if onDevice.state === "ready"}
+                      On-device ready · {onDevice.model}
+                    {:else if onDevice.state === "modelMissing"}
+                      Model not installed
+                      <button
+                        type="button"
+                        class="ff-btn ff-btn--sm"
+                        onclick={pullModel}
+                        disabled={pulling}
+                      >
+                        {pulling ? `Pulling… ${pullPct}%` : `Pull ${onDevice.model}`}
+                      </button>
+                    {:else}
+                      Server unreachable: install &amp; start Ollama, then pull the model:
+                      <code>ollama serve</code> · <code>ollama pull {settings.onDeviceModel}</code>
+                      <br />(Framework NPU: run <code>flm serve</code> +
+                      <code>flm pull {settings.onDeviceModel}</code> instead)
+                    {/if}
+                  </div>
+                {/if}
+              {:else}
+                <div class="ready">
+                  On-device models aren't available on iPad. Quick and Private chats
+                  need a desktop; use Agentic or Best over your Firefly network.
                 </div>
               {/if}
             </section>
@@ -351,7 +362,7 @@
         </div>
         {/if}
 
-        <Chat conversationId={selectedId} refreshSignal={syncTick} profile={active?.profile ?? "adult"} ontitled={refresh} />
+        <Chat conversationId={selectedId} refreshSignal={syncTick} profile={active?.profile ?? "adult"} isMobile={isMobile} ontitled={refresh} />
       </div>
     </main>
   {/if}
