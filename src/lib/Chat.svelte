@@ -2,6 +2,7 @@
   import {
     getMessages,
     sendMessage,
+    generateConversationTitle,
     type Message,
     type TaskHint,
   } from "./api";
@@ -13,7 +14,13 @@
     conversationId,
     refreshSignal = 0,
     profile = "adult",
-  }: { conversationId: string | null; refreshSignal?: number; profile?: "kid" | "adult" } = $props();
+    ontitled,
+  }: {
+    conversationId: string | null;
+    refreshSignal?: number;
+    profile?: "kid" | "adult";
+    ontitled?: () => void;
+  } = $props();
 
   const isKid = $derived(profile === "kid");
 
@@ -42,11 +49,25 @@
     }
   });
 
+  // Best-effort: name a brand-new conversation from its first message.
+  // Never let a naming failure disrupt the chat.
+  async function nameConversation(id: string, firstMessage: string) {
+    try {
+      await generateConversationTitle(id, firstMessage);
+      ontitled?.();
+    } catch {
+      /* on-device model may be unreachable; leave the default title */
+    }
+  }
+
   async function submit(event: Event) {
     event.preventDefault();
     const id = conversationId;
     const content = draft.trim();
     if (!id || !content || sending) return;
+
+    const isFirst = messages.length === 0;
+    const taskHint = task;
 
     draft = "";
     error = null;
@@ -71,7 +92,7 @@
       }) - 1;
 
     try {
-      await sendMessage(id, content, task, (e) => {
+      const sendPromise = sendMessage(id, content, taskHint, (e) => {
         if (e.type === "token") {
           messages[assistantIdx].content += e.text;
         } else if (e.type === "reasoning") {
@@ -85,6 +106,21 @@
           error = e.message;
         }
       });
+
+      // Auto-name the first message. Skip `private` (its content must not leave
+      // the device, and the title row syncs). For `quick`, let the user's request
+      // run first; for other tiers, name in parallel so the reply isn't delayed.
+      if (isFirst && taskHint !== "private") {
+        if (taskHint === "quick") {
+          await sendPromise;
+          await nameConversation(id, content);
+        } else {
+          nameConversation(id, content);
+          await sendPromise;
+        }
+      } else {
+        await sendPromise;
+      }
     } catch (err) {
       error = String(err);
     } finally {
