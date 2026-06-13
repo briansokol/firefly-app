@@ -452,6 +452,18 @@ pub async fn set_active_user_id(pool: &SqlitePool, user_id: &str) -> Result<()> 
     set_setting(pool, "active_user_id", user_id).await
 }
 
+pub async fn clear_active_user_id(pool: &SqlitePool) -> Result<()> {
+    set_setting(pool, "active_user_id", "").await
+}
+
+pub async fn delete_user(pool: &SqlitePool, user_id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM users WHERE user_id = ?")
+        .bind(user_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn get_pending_conversations(pool: &SqlitePool, user_id: &str) -> Result<Vec<ConvRow>> {
     let rows = sqlx::query(
         "SELECT id, user_id, title, created_at, updated_at, deleted_at FROM conversations \

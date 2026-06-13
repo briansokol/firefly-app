@@ -18,6 +18,7 @@
     listProfiles,
     switchProfile,
     refreshActiveProfile,
+    signOut,
     type Profile,
   } from "$lib/api";
   import ConversationList from "$lib/ConversationList.svelte";
@@ -321,6 +322,29 @@
                   <span>Inject memories on home-base requests</span>
                 </label>
               </div>
+            </section>
+
+            <section class="ff-card sec">
+              <h3>Account</h3>
+              {#if active}
+                <p class="note">Signed in as {active.displayName}.</p>
+              {/if}
+              <button
+                class="ff-btn ff-btn--danger"
+                onclick={async () => {
+                  profiles = await signOut();
+                  if (profiles.length === 0) {
+                    showSettings = false;
+                    selectedId = null;
+                    conversations = [];
+                  } else {
+                    profiles = await refreshActiveProfile();
+                    selectedId = null;
+                    await refresh();
+                    runSync();
+                  }
+                }}
+              >Sign out</button>
             </section>
 
             <div class="btn-row">

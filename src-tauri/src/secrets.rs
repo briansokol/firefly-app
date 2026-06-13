@@ -59,3 +59,18 @@ pub fn set_litellm_key(user_id: &str, key: &str) -> Result<()> {
 pub fn get_litellm_key(user_id: &str) -> Result<String> {
     read(&litellm_account(user_id))
 }
+
+fn delete(account: &str) -> Result<()> {
+    match entry(account)?.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(e) => Err(map_keyring_err(e)),
+    }
+}
+
+pub fn delete_device_token(user_id: &str) -> Result<()> {
+    delete(&device_account(user_id))
+}
+
+pub fn delete_litellm_key(user_id: &str) -> Result<()> {
+    delete(&litellm_account(user_id))
+}

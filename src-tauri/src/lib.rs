@@ -370,6 +370,26 @@ async fn refresh_active_profile(state: State<'_, AppState>) -> Result<Vec<Profil
     profiles_dto(&state.pool).await
 }
 
+/// Clear the active profile's local identity (keychain tokens + user row) and
+/// activate a remaining profile, or drop to onboarding if none remain. Local
+/// only: no server-side device removal, so it works offline. This is also the
+/// migration path off legacy device-self-registration tokens.
+#[tauri::command]
+async fn sign_out(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
+    if let Some(user_id) = store::get_active_user_id(&state.pool).await? {
+        // Best-effort keychain cleanup: a missing entry is fine.
+        let _ = secrets::delete_device_token(&user_id);
+        let _ = secrets::delete_litellm_key(&user_id);
+        store::delete_user(&state.pool, &user_id).await?;
+
+        match store::list_users(&state.pool).await?.first() {
+            Some(next) => store::set_active_user_id(&state.pool, &next.user_id).await?,
+            None => store::clear_active_user_id(&state.pool).await?,
+        }
+    }
+    profiles_dto(&state.pool).await
+}
+
 #[tauri::command]
 async fn list_conversations(state: State<'_, AppState>) -> Result<Vec<Conversation>> {
     match store::get_active_user_id(&state.pool).await? {
@@ -788,6 +808,7 @@ pub fn run() {
             list_profiles,
             switch_profile,
             refresh_active_profile,
+            sign_out,
             signup,
             login,
             register_device,

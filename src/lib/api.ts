@@ -85,6 +85,9 @@ export const switchProfile = (userId: string) =>
 export const refreshActiveProfile = () =>
   invoke<Profile[]>("refresh_active_profile");
 
+// Clear the active profile's local identity and return the remaining profiles.
+export const signOut = () => invoke<Profile[]>("sign_out");
+
 // Onboarding: create an account, then register/claim this device.
 export const signup = (username: string, password: string, displayName: string) =>
   invoke<void>("signup", { username, password, displayName });
