@@ -22,6 +22,20 @@ const ALLOWED_TAGS = [
 ];
 const ALLOWED_ATTR = ["href", "title", "class"];
 
+const SAFE_SCHEMES = /^(https?:|mailto:)/i;
+
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    const href = node.getAttribute("href");
+    if (href && SAFE_SCHEMES.test(href)) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer nofollow");
+    } else if (href) {
+      node.removeAttribute("href");
+    }
+  }
+});
+
 export function renderMarkdown(source: string): string {
   const raw = marked.parse(source ?? "") as string;
   return DOMPurify.sanitize(raw, { ALLOWED_TAGS, ALLOWED_ATTR });

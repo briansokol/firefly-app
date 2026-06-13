@@ -61,3 +61,31 @@ describe("renderMarkdown — sanitization", () => {
     expect(html).toContain('class="hljs');
   });
 });
+
+describe("renderMarkdown — link hardening", () => {
+  it("adds target=_blank to safe links", () => {
+    const html = renderMarkdown("[x](https://example.com)");
+    expect(html).toContain('target="_blank"');
+  });
+  it("adds rel=noopener noreferrer nofollow to safe links", () => {
+    const html = renderMarkdown("[x](https://example.com)");
+    expect(html).toContain('rel="noopener noreferrer nofollow"');
+  });
+  it("allows mailto links", () => {
+    const html = renderMarkdown("[x](mailto:a@b.com)");
+    expect(html).toContain('href="mailto:a@b.com"');
+  });
+});
+
+describe("renderMarkdown — streaming/partial input", () => {
+  it("renders an unclosed code fence without throwing", () => {
+    expect(() => renderMarkdown("```js\nconst a =")).not.toThrow();
+    expect(renderMarkdown("```js\nconst a =")).toContain("<pre>");
+  });
+  it("handles a trailing unterminated bold without throwing", () => {
+    expect(() => renderMarkdown("hello **wor")).not.toThrow();
+  });
+  it("returns empty for empty input", () => {
+    expect(renderMarkdown("").trim()).toBe("");
+  });
+});
