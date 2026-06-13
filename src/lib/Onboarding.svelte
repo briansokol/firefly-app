@@ -107,10 +107,11 @@
         autocomplete="new-password"
         bind:value={password}
       />
+      <p class="onboard-hint">Password must be at least 8 characters.</p>
       <input class="ff-input" placeholder="Display name" bind:value={displayName} />
       <button
         class="ff-btn ff-btn--primary"
-        disabled={busy || !username.trim() || !password || !displayName.trim()}
+        disabled={busy || !username.trim() || password.length < 8 || !displayName.trim()}
         onclick={doSignup}>{busy ? "Creating…" : "Continue"}</button
       >
       <button class="ff-btn ff-btn--ghost" onclick={() => goto("choice")}>Back</button>
@@ -229,6 +230,10 @@
   }
   .onboard :global(.ff-btn) {
     align-self: flex-start;
+  }
+  .onboard-hint {
+    margin-top: -8px;
+    font-size: var(--ff-text-sm);
   }
   .onboard-error {
     margin: 0;
