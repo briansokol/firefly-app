@@ -34,3 +34,30 @@ describe("renderMarkdown — GFM", () => {
     expect(renderMarkdown("a\nb")).toContain("<br>");
   });
 });
+
+describe("renderMarkdown — sanitization", () => {
+  it("strips <script> tags", () => {
+    const html = renderMarkdown("<script>alert(1)<\/script>");
+    expect(html).not.toContain("<script");
+  });
+  it("neutralizes img onerror", () => {
+    const html = renderMarkdown('<img src=x onerror="alert(1)">');
+    expect(html).not.toContain("onerror");
+  });
+  it("drops javascript: link hrefs", () => {
+    const html = renderMarkdown("[x](javascript:alert(1))");
+    expect(html).not.toContain("javascript:");
+  });
+  it("drops data: link hrefs", () => {
+    const html = renderMarkdown("[x](data:text/html,<script>1<\/script>)");
+    expect(html).not.toContain("data:");
+  });
+  it("keeps safe http links", () => {
+    const html = renderMarkdown("[x](https://example.com)");
+    expect(html).toContain('href="https://example.com"');
+  });
+  it("preserves highlighted code (class attrs survive)", () => {
+    const html = renderMarkdown("```js\nconst a = 1;\n```");
+    expect(html).toContain('class="hljs');
+  });
+});
