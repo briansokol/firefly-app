@@ -37,10 +37,22 @@ struct ReachabilityCache {
     reachable: bool,
 }
 
+/// In-flight onboarding state held only in memory between the auth step
+/// (signup/login) and the device step (register/claim). Never persisted: the
+/// session token is short-lived and only authorizes the device call. If the
+/// app closes mid-onboarding nothing is committed and onboarding restarts.
+#[derive(Clone)]
+struct PendingAuth {
+    display_name: String,
+    profile: String,
+    session_token: String,
+}
+
 struct AppState {
     pool: SqlitePool,
     reachability: Mutex<ReachabilityCache>,
     sync_guard: Arc<Mutex<()>>,
+    pending_auth: Mutex<Option<PendingAuth>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -122,28 +134,62 @@ fn on_device_base(endpoint: &str) -> String {
 #[tauri::command]
 async fn check_on_device(state: State<'_, AppState>) -> Result<OnDevice> {
     let s = load_settings(&state.pool).await?;
-    let base = on_device_base(&s.on_device_endpoint);
+    Ok(probe_on_device(&s.on_device_endpoint, &s.on_device_model).await)
+}
+
+/// Probe the on-device model server (Ollama) for readiness. Connection failure or
+/// timeout -> `Unreachable`; reachable but the configured model not pulled ->
+/// `ModelMissing`; both present -> `Ready`.
+async fn probe_on_device(endpoint: &str, model: &str) -> OnDevice {
+    let base = on_device_base(endpoint);
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_millis(1500))
         .build()
     {
         Ok(c) => c,
-        Err(_) => return Ok(OnDevice::Unreachable),
+        Err(_) => return OnDevice::Unreachable,
     };
     let resp = match client.get(format!("{base}/api/tags")).send().await {
         Ok(r) => r,
-        Err(_) => return Ok(OnDevice::Unreachable),
+        Err(_) => return OnDevice::Unreachable,
     };
     let tags: serde_json::Value = resp.json().await.unwrap_or_default();
-    let present = tags["models"].as_array().is_some_and(|ms| {
-        ms.iter()
-            .any(|m| m["name"].as_str() == Some(s.on_device_model.as_str()))
-    });
-    Ok(if present {
-        OnDevice::Ready { model: s.on_device_model }
+    let present = tags["models"]
+        .as_array()
+        .is_some_and(|ms| ms.iter().any(|m| m["name"].as_str() == Some(model)));
+    if present {
+        OnDevice::Ready { model: model.to_string() }
     } else {
-        OnDevice::ModelMissing { model: s.on_device_model }
-    })
+        OnDevice::ModelMissing { model: model.to_string() }
+    }
+}
+
+/// On-device readiness used for routing. iOS has no on-device target, so it is
+/// always treated as unreachable there without probing.
+async fn on_device_state(settings: &Settings) -> OnDevice {
+    if cfg!(target_os = "ios") {
+        return OnDevice::Unreachable;
+    }
+    probe_on_device(&settings.on_device_endpoint, &settings.on_device_model).await
+}
+
+/// Actionable message when a route required on-device but the local model server
+/// isn't ready. `None` -> use the router's own message (on iOS, where there is no
+/// on-device target, or when on-device was actually ready).
+fn on_device_hint(state: &OnDevice) -> Option<String> {
+    if cfg!(target_os = "ios") {
+        return None;
+    }
+    match state {
+        OnDevice::Unreachable => Some(
+            "the on-device model server isn't running. Start it (e.g. `ollama serve`) and try again."
+                .into(),
+        ),
+        OnDevice::ModelMissing { model } => Some(format!(
+            "the on-device model \"{model}\" isn't downloaded yet. Pull it before using on-device chat."
+        )),
+        OnDevice::Ready { .. } => None,
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -228,21 +274,114 @@ async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
     profiles_dto(&state.pool).await
 }
 
-#[tauri::command]
-async fn register_profile(
-    state: State<'_, AppState>,
-    display_name: String,
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DeviceDto {
+    id: String,
+    name: String,
+    last_sync: Option<String>,
+}
+
+/// Persist freshly-issued device credentials + user row, activate the user,
+/// clear the pending auth, and return the refreshed profile list.
+async fn commit_device(
+    state: &AppState,
+    settings: &Settings,
+    pending: &PendingAuth,
+    cred: sync::DeviceCredentials,
 ) -> Result<Vec<ProfileDto>> {
-    let settings = load_settings(&state.pool).await?;
-    let reg = sync::register_device(&settings.sync_endpoint, &settings.device_name, &display_name)
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    secrets::set_device_token(&reg.user_id, &reg.device_token)?;
-    secrets::set_litellm_key(&reg.user_id, &reg.litellm_key)?;
-    store::upsert_user(&state.pool, &reg.user_id, &reg.device_id, &display_name, &reg.profile).await?;
-    store::set_active_user_id(&state.pool, &reg.user_id).await?;
-    refresh_profile(&state.pool, &settings, &reg.user_id).await;
+    secrets::set_device_token(&cred.user_id, &cred.device_token)?;
+    secrets::set_litellm_key(&cred.user_id, &cred.litellm_key)?;
+    store::upsert_user(
+        &state.pool,
+        &cred.user_id,
+        &cred.device_id,
+        &pending.display_name,
+        &pending.profile,
+    )
+    .await?;
+    store::set_active_user_id(&state.pool, &cred.user_id).await?;
+    refresh_profile(&state.pool, settings, &cred.user_id).await;
+    *state.pending_auth.lock().await = None;
     profiles_dto(&state.pool).await
+}
+
+#[tauri::command]
+async fn signup(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+    display_name: String,
+) -> Result<()> {
+    let settings = load_settings(&state.pool).await?;
+    let auth = sync::signup(
+        &settings.sync_endpoint,
+        username.trim(),
+        &password,
+        display_name.trim(),
+    )
+    .await?;
+    *state.pending_auth.lock().await = Some(PendingAuth {
+        display_name: auth.display_name,
+        profile: auth.profile,
+        session_token: auth.session_token,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+async fn login(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<Vec<DeviceDto>> {
+    let settings = load_settings(&state.pool).await?;
+    let result = sync::login(&settings.sync_endpoint, username.trim(), &password).await?;
+    let devices = result
+        .devices
+        .into_iter()
+        .map(|d| DeviceDto {
+            id: d.id,
+            name: d.name,
+            last_sync: d.last_sync,
+        })
+        .collect();
+    *state.pending_auth.lock().await = Some(PendingAuth {
+        display_name: result.auth.display_name,
+        profile: result.auth.profile,
+        session_token: result.auth.session_token,
+    });
+    Ok(devices)
+}
+
+#[tauri::command]
+async fn register_device(state: State<'_, AppState>, name: String) -> Result<Vec<ProfileDto>> {
+    let settings = load_settings(&state.pool).await?;
+    // Clone out of the guard and DROP it before the network call / commit_device
+    // (tokio Mutex is not reentrant; commit_device re-locks pending_auth).
+    let pending = {
+        let guard = state.pending_auth.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::Other("no pending authentication; restart onboarding".into()))?
+    };
+    let cred =
+        sync::register_device(&settings.sync_endpoint, &pending.session_token, name.trim()).await?;
+    commit_device(&state, &settings, &pending, cred).await
+}
+
+#[tauri::command]
+async fn claim_device(state: State<'_, AppState>, device_id: String) -> Result<Vec<ProfileDto>> {
+    let settings = load_settings(&state.pool).await?;
+    let pending = {
+        let guard = state.pending_auth.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::Other("no pending authentication; restart onboarding".into()))?
+    };
+    let cred =
+        sync::claim_device(&settings.sync_endpoint, &pending.session_token, &device_id).await?;
+    commit_device(&state, &settings, &pending, cred).await
 }
 
 #[tauri::command]
@@ -261,6 +400,26 @@ async fn refresh_active_profile(state: State<'_, AppState>) -> Result<Vec<Profil
     if let Some(active) = store::get_active_user_id(&state.pool).await? {
         let settings = load_settings(&state.pool).await?;
         refresh_profile(&state.pool, &settings, &active).await;
+    }
+    profiles_dto(&state.pool).await
+}
+
+/// Clear the active profile's local identity (keychain tokens + user row) and
+/// activate a remaining profile, or drop to onboarding if none remain. Local
+/// only: no server-side device removal, so it works offline. This is also the
+/// migration path off legacy device-self-registration tokens.
+#[tauri::command]
+async fn sign_out(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
+    if let Some(user_id) = store::get_active_user_id(&state.pool).await? {
+        // Best-effort keychain cleanup: a missing entry is fine.
+        let _ = secrets::delete_device_token(&user_id);
+        let _ = secrets::delete_litellm_key(&user_id);
+        store::delete_user(&state.pool, &user_id).await?;
+
+        match store::list_users(&state.pool).await?.first() {
+            Some(next) => store::set_active_user_id(&state.pool, &next.user_id).await?,
+            None => store::clear_active_user_id(&state.pool).await?,
+        }
     }
     profiles_dto(&state.pool).await
 }
@@ -360,6 +519,7 @@ async fn generate_conversation_title(
         .ok_or_else(|| AppError::Other("active profile not found".into()))?;
     let profile = if user.profile == "adult" { Profile::Adult } else { Profile::Kid };
 
+    let on_device = on_device_state(&settings).await;
     let inputs = RouteInputs {
         firefly_endpoint: &settings.firefly_endpoint,
         on_device_endpoint: &settings.on_device_endpoint,
@@ -368,10 +528,11 @@ async fn generate_conversation_title(
         model_chat_heavy: &settings.model_chat_heavy,
         model_frontier: &settings.model_frontier,
         firefly_reachable: reachable,
-        on_device_available: !cfg!(target_os = "ios"),
+        on_device_available: matches!(on_device, OnDevice::Ready { .. }),
         profile,
     };
-    // Quick resolves on-device on desktop; on iOS it has no target, so naming is best-effort.
+    // Quick resolves on-device on desktop; on iOS it has no target. When the local
+    // model server isn't ready (offline or model not pulled), naming is skipped.
     let route = match router::resolve_route(TaskHint::Quick, &inputs) {
         Ok(r) => r,
         Err(_) => return Ok(conv),
@@ -575,6 +736,7 @@ async fn send_message(
         .ok_or_else(|| AppError::Other("active profile not found".into()))?;
     let profile = if user.profile == "adult" { Profile::Adult } else { Profile::Kid };
 
+    let on_device = on_device_state(&settings).await;
     let inputs = RouteInputs {
         firefly_endpoint: &settings.firefly_endpoint,
         on_device_endpoint: &settings.on_device_endpoint,
@@ -583,12 +745,18 @@ async fn send_message(
         model_chat_heavy: &settings.model_chat_heavy,
         model_frontier: &settings.model_frontier,
         firefly_reachable: reachable,
-        on_device_available: !cfg!(target_os = "ios"),
+        on_device_available: matches!(on_device, OnDevice::Ready { .. }),
         profile,
     };
-    let route = router::resolve_route(task, &inputs).map_err(|e| match e {
-        RouteError::Refused(m) | RouteError::NotConfigured(m) => AppError::Other(m),
-    })?;
+    let route = match router::resolve_route(task, &inputs) {
+        Ok(r) => r,
+        Err(RouteError::Refused(m)) => return Err(AppError::Other(m)),
+        // A NotConfigured result usually means on-device was the only option and it
+        // isn't ready; surface an actionable message instead of a raw network error.
+        Err(RouteError::NotConfigured(m)) => {
+            return Err(AppError::Other(on_device_hint(&on_device).unwrap_or(m)));
+        }
+    };
 
     // LiteLLM/home-base/cloud routes carry the user's per-user virtual key.
     let token = if route.use_token {
@@ -668,6 +836,7 @@ pub fn run() {
                     pool,
                     reachability: Mutex::new(ReachabilityCache::default()),
                     sync_guard,
+                    pending_auth: Mutex::new(None),
                 });
             });
             Ok(())
@@ -680,9 +849,13 @@ pub fn run() {
             delete_conversation,
             generate_conversation_title,
             list_profiles,
-            register_profile,
             switch_profile,
             refresh_active_profile,
+            sign_out,
+            signup,
+            login,
+            register_device,
+            claim_device,
             get_settings,
             set_settings,
             send_message,

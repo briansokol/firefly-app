@@ -71,16 +71,35 @@ export interface Profile {
   active: boolean;
 }
 
-export const listProfiles = () => invoke<Profile[]>("list_profiles");
+export interface DeviceSummary {
+  id: string;
+  name: string;
+  lastSync?: string | null;
+}
 
-export const registerProfile = (displayName: string) =>
-  invoke<Profile[]>("register_profile", { displayName });
+export const listProfiles = () => invoke<Profile[]>("list_profiles");
 
 export const switchProfile = (userId: string) =>
   invoke<Profile[]>("switch_profile", { userId });
 
 export const refreshActiveProfile = () =>
   invoke<Profile[]>("refresh_active_profile");
+
+// Clear the active profile's local identity and return the remaining profiles.
+export const signOut = () => invoke<Profile[]>("sign_out");
+
+// Onboarding: create an account, then register/claim this device.
+export const signup = (username: string, password: string, displayName: string) =>
+  invoke<void>("signup", { username, password, displayName });
+
+export const login = (username: string, password: string) =>
+  invoke<DeviceSummary[]>("login", { username, password });
+
+export const registerDevice = (name: string) =>
+  invoke<Profile[]>("register_device", { name });
+
+export const claimDevice = (deviceId: string) =>
+  invoke<Profile[]>("claim_device", { deviceId });
 
 export interface SyncStatus {
   ok: boolean;
