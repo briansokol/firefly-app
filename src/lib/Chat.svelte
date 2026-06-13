@@ -6,6 +6,7 @@
     type Message,
     type TaskHint,
   } from "./api";
+  import Markdown from "./Markdown.svelte";
 
   // `reasoning` is ephemeral; tier/servedModel/degraded drive the badge.
   type ChatMessage = Message & { reasoning?: string; degraded?: boolean };
@@ -145,7 +146,7 @@
       {#each messages as m (m.id)}
         {#if m.role === "user"}
           <div class="msg-user">
-            <div class="ff-bubble-user">{m.content}</div>
+            <div class="ff-bubble-user"><Markdown source={m.content} /></div>
           </div>
         {:else}
           <div class="msg-ai">
@@ -165,7 +166,7 @@
                 </details>
               {/if}
               {#if m.content}
-                <div class="ff-bubble-ai">{m.content}</div>
+                <div class="ff-bubble-ai"><Markdown source={m.content} /></div>
               {:else}
                 <div class="ff-bubble-ai">
                   <span class="typing"><i></i><i></i><i></i></span>

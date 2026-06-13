@@ -2,6 +2,7 @@
 :root {
   --ff-font-display: 'Baloo 2', system-ui, sans-serif;   /* headings, buttons, brand, overlines */
   --ff-font-body: 'Nunito', system-ui, sans-serif;       /* body, labels, messages */
+  --ff-font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
 
   /* Scale */
   --ff-text-xs: 11px;     /* overlines, badges (always 800 weight + letterspaced caps) */
