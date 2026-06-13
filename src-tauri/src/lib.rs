@@ -37,10 +37,22 @@ struct ReachabilityCache {
     reachable: bool,
 }
 
+/// In-flight onboarding state held only in memory between the auth step
+/// (signup/login) and the device step (register/claim). Never persisted: the
+/// session token is short-lived and only authorizes the device call. If the
+/// app closes mid-onboarding nothing is committed and onboarding restarts.
+#[derive(Clone)]
+struct PendingAuth {
+    display_name: String,
+    profile: String,
+    session_token: String,
+}
+
 struct AppState {
     pool: SqlitePool,
     reachability: Mutex<ReachabilityCache>,
     sync_guard: Arc<Mutex<()>>,
+    pending_auth: Mutex<Option<PendingAuth>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -228,21 +240,114 @@ async fn list_profiles(state: State<'_, AppState>) -> Result<Vec<ProfileDto>> {
     profiles_dto(&state.pool).await
 }
 
-#[tauri::command]
-async fn register_profile(
-    state: State<'_, AppState>,
-    display_name: String,
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+struct DeviceDto {
+    id: String,
+    name: String,
+    last_sync: Option<String>,
+}
+
+/// Persist freshly-issued device credentials + user row, activate the user,
+/// clear the pending auth, and return the refreshed profile list.
+async fn commit_device(
+    state: &AppState,
+    settings: &Settings,
+    pending: &PendingAuth,
+    cred: sync::DeviceCredentials,
 ) -> Result<Vec<ProfileDto>> {
-    let settings = load_settings(&state.pool).await?;
-    let reg = sync::register_device(&settings.sync_endpoint, &settings.device_name, &display_name)
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    secrets::set_device_token(&reg.user_id, &reg.device_token)?;
-    secrets::set_litellm_key(&reg.user_id, &reg.litellm_key)?;
-    store::upsert_user(&state.pool, &reg.user_id, &reg.device_id, &display_name, &reg.profile).await?;
-    store::set_active_user_id(&state.pool, &reg.user_id).await?;
-    refresh_profile(&state.pool, &settings, &reg.user_id).await;
+    secrets::set_device_token(&cred.user_id, &cred.device_token)?;
+    secrets::set_litellm_key(&cred.user_id, &cred.litellm_key)?;
+    store::upsert_user(
+        &state.pool,
+        &cred.user_id,
+        &cred.device_id,
+        &pending.display_name,
+        &pending.profile,
+    )
+    .await?;
+    store::set_active_user_id(&state.pool, &cred.user_id).await?;
+    refresh_profile(&state.pool, settings, &cred.user_id).await;
+    *state.pending_auth.lock().await = None;
     profiles_dto(&state.pool).await
+}
+
+#[tauri::command]
+async fn signup(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+    display_name: String,
+) -> Result<()> {
+    let settings = load_settings(&state.pool).await?;
+    let auth = sync::signup(
+        &settings.sync_endpoint,
+        username.trim(),
+        &password,
+        display_name.trim(),
+    )
+    .await?;
+    *state.pending_auth.lock().await = Some(PendingAuth {
+        display_name: auth.display_name,
+        profile: auth.profile,
+        session_token: auth.session_token,
+    });
+    Ok(())
+}
+
+#[tauri::command]
+async fn login(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<Vec<DeviceDto>> {
+    let settings = load_settings(&state.pool).await?;
+    let result = sync::login(&settings.sync_endpoint, username.trim(), &password).await?;
+    let devices = result
+        .devices
+        .into_iter()
+        .map(|d| DeviceDto {
+            id: d.id,
+            name: d.name,
+            last_sync: d.last_sync,
+        })
+        .collect();
+    *state.pending_auth.lock().await = Some(PendingAuth {
+        display_name: result.auth.display_name,
+        profile: result.auth.profile,
+        session_token: result.auth.session_token,
+    });
+    Ok(devices)
+}
+
+#[tauri::command]
+async fn register_device(state: State<'_, AppState>, name: String) -> Result<Vec<ProfileDto>> {
+    let settings = load_settings(&state.pool).await?;
+    // Clone out of the guard and DROP it before the network call / commit_device
+    // (tokio Mutex is not reentrant; commit_device re-locks pending_auth).
+    let pending = {
+        let guard = state.pending_auth.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::Other("no pending authentication; restart onboarding".into()))?
+    };
+    let cred =
+        sync::register_device(&settings.sync_endpoint, &pending.session_token, name.trim()).await?;
+    commit_device(&state, &settings, &pending, cred).await
+}
+
+#[tauri::command]
+async fn claim_device(state: State<'_, AppState>, device_id: String) -> Result<Vec<ProfileDto>> {
+    let settings = load_settings(&state.pool).await?;
+    let pending = {
+        let guard = state.pending_auth.lock().await;
+        guard
+            .clone()
+            .ok_or_else(|| AppError::Other("no pending authentication; restart onboarding".into()))?
+    };
+    let cred =
+        sync::claim_device(&settings.sync_endpoint, &pending.session_token, &device_id).await?;
+    commit_device(&state, &settings, &pending, cred).await
 }
 
 #[tauri::command]
@@ -668,6 +773,7 @@ pub fn run() {
                     pool,
                     reachability: Mutex::new(ReachabilityCache::default()),
                     sync_guard,
+                    pending_auth: Mutex::new(None),
                 });
             });
             Ok(())
@@ -680,9 +786,12 @@ pub fn run() {
             delete_conversation,
             generate_conversation_title,
             list_profiles,
-            register_profile,
             switch_profile,
             refresh_active_profile,
+            signup,
+            login,
+            register_device,
+            claim_device,
             get_settings,
             set_settings,
             send_message,
