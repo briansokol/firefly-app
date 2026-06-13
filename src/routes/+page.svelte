@@ -16,13 +16,13 @@
     type Settings,
     type OnDeviceStatus,
     listProfiles,
-    registerProfile,
     switchProfile,
     refreshActiveProfile,
     type Profile,
   } from "$lib/api";
   import ConversationList from "$lib/ConversationList.svelte";
   import Chat from "$lib/Chat.svelte";
+  import Onboarding from "$lib/Onboarding.svelte";
 
   let conversations = $state<Conversation[]>([]);
   let selectedId = $state<string | null>(null);
@@ -60,8 +60,6 @@
   let syncTick = $state(0);
 
   let profiles = $state<Profile[]>([]);
-  let newProfileName = $state("");
-  let registering = $state(false);
   let error = $state<string | null>(null);
 
   const active = $derived(profiles.find((p) => p.active) ?? null);
@@ -157,40 +155,14 @@
 
 <div class="app">
   {#if profiles.length === 0}
-    <div class="onboard-screen">
-      <div class="onboard ff-card">
-        <div class="brand brand--lg"><span class="ff-spark"></span> Firefly</div>
-        <h2>Create a profile</h2>
-        <p>New profiles start as a kid profile. An adult can upgrade it later on the server.</p>
-        {#if error}
-          <p class="onboard-error">{error}</p>
-        {/if}
-        <input
-          class="ff-input"
-          aria-label="Display name"
-          placeholder="Display name"
-          bind:value={newProfileName}
-        />
-        <button
-          class="ff-btn ff-btn--primary"
-          disabled={registering || !newProfileName.trim()}
-          onclick={async () => {
-            registering = true;
-            error = null;
-            try {
-              profiles = await registerProfile(newProfileName.trim());
-              newProfileName = "";
-              await refresh();
-              runSync();
-            } catch (e) {
-              error = String(e);
-            } finally {
-              registering = false;
-            }
-          }}
-        >{registering ? "Creating…" : "Create"}</button>
-      </div>
-    </div>
+    <Onboarding
+      ondone={async (p) => {
+        profiles = p;
+        profiles = await refreshActiveProfile();
+        await refresh();
+        runSync();
+      }}
+    />
   {:else}
     <ConversationList
       {conversations}
@@ -521,49 +493,6 @@
   }
   .save-error {
     margin: 8px 0 0;
-    color: var(--ff-red);
-    font-size: var(--ff-text-base);
-    font-weight: 700;
-  }
-
-  /* ---------- Onboarding ---------- */
-  .onboard-screen {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    background:
-      radial-gradient(800px 400px at 50% 120%, rgba(139, 92, 246, 0.1), transparent 60%),
-      var(--ff-surface-app);
-  }
-  .onboard {
-    width: 380px;
-    max-width: 100%;
-    display: flex;
-    flex-direction: column;
-    gap: 16px;
-    box-shadow: var(--ff-shadow-pop);
-  }
-  .brand--lg {
-    font-size: 22px;
-  }
-  .onboard h2 {
-    margin: 0;
-    font: 600 24px var(--ff-font-display);
-    color: var(--ff-text-body);
-  }
-  .onboard p {
-    margin: 0;
-    font-size: var(--ff-text-base);
-    color: var(--ff-text-muted);
-    line-height: var(--ff-leading-body);
-  }
-  .onboard :global(.ff-btn) {
-    align-self: flex-start;
-  }
-  .onboard-error {
-    margin: 0;
     color: var(--ff-red);
     font-size: var(--ff-text-base);
     font-weight: 700;
